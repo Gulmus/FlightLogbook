@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<title>Logbook voli</title>
+<style>
+  /* ----------------------------------------------------------------------
+     Foglio di stile unico, pensato per il telefono: una colonna, comandi
+     grandi, nessuna libreria esterna (la web app deve funzionare offline
+     rispetto a CDN e caricarsi in fretta su rete mobile).
+     ---------------------------------------------------------------------- */
+  :root{
+    --blu:#2563eb; --verde:#059669; --rosso:#dc2626; --ambra:#d97706;
+    --grigio:#6b7280; --bordo:#e5e7eb; --sfondo:#f8fafc;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:12px 12px 40px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--sfondo); color:#111827; font-size:16px;
+  }
+  h1{font-size:19px; margin:4px 0 12px}
+  h2{font-size:15px; margin:0 0 10px; color:#374151}
+  .card{background:#fff; border:1px solid var(--bordo); border-radius:12px; padding:14px; margin-bottom:14px}
+
+  /* --- riquadri della recency --- */
+  .griglia{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .box{border:1px solid var(--bordo); border-radius:10px; padding:10px; background:#fff}
+  .box.ok{border-color:#a7f3d0; background:#ecfdf5}
+  .box.ko{border-color:#fecaca; background:#fef2f2}
+  .box .etichetta{font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--grigio)}
+  .box .valore{font-size:26px; font-weight:700; line-height:1.15; margin:2px 0}
+  .box .sotto{font-size:12px; color:var(--grigio)}
+  .box.ok .valore{color:var(--verde)}
+  .box.ko .valore{color:var(--rosso)}
+  .pieno{grid-column:1 / -1}
+
+  /* --- modulo --- */
+  label{display:block; font-size:12px; color:var(--grigio); margin:10px 0 4px}
+  input,select,textarea{
+    width:100%; padding:11px; font-size:16px; border:1px solid #d1d5db;
+    border-radius:9px; background:#fff; font-family:inherit;
+  }
+  textarea{min-height:52px; resize:vertical}
+  .due{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .nascosto{display:none !important}
+
+  button{
+    width:100%; padding:14px; font-size:16px; font-weight:600; color:#fff;
+    background:var(--blu); border:0; border-radius:10px; margin-top:14px;
+  }
+  button:disabled{background:#9ca3af}
+
+  /* --- selettore PIC / DUAL --- */
+  .segmenti{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .segmenti .seg{
+    margin:0; padding:12px; background:#fff; color:#374151;
+    border:1px solid #d1d5db; border-radius:9px; font-weight:600;
+  }
+  .segmenti .seg.attivo{background:var(--blu); color:#fff; border-color:var(--blu)}
+  .durata{margin-top:12px; padding:10px; border-radius:9px; background:#eff6ff;
+          color:#1e40af; font-size:14px; text-align:center; font-weight:600}
+  .durata.errore{background:#fef2f2; color:var(--rosso)}
+
+  /* --- messaggi --- */
+  .msg{padding:11px; border-radius:9px; font-size:14px; margin-bottom:12px}
+  .msg.ok{background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0}
+  .msg.err{background:#fef2f2; color:#991b1b; border:1px solid #fecaca}
+  .msg.att{background:#fffbeb; color:#92400e; border:1px solid #fde68a}
+
+  /* --- elenco ultimi voli --- */
+  .volo{display:flex; justify-content:space-between; gap:8px; padding:9px 0; border-bottom:1px solid #f3f4f6; font-size:14px}
+  .volo:last-child{border-bottom:0}
+  .volo .sx strong{font-weight:600}
+  .volo .sx div{font-size:12px; color:var(--grigio); margin-top:2px}
+  .volo .dx{text-align:right; white-space:nowrap}
+  .volo .dx .ore{font-weight:700}
+  .tag{display:inline-block; font-size:10px; padding:1px 6px; border-radius:20px; background:#e0e7ff; color:#3730a3; margin-left:4px}
+  .tag.ko{background:#fee2e2; color:#991b1b}
+  .tag.dual{background:#fef3c7; color:#92400e}
+  .nota{font-size:12px; color:var(--grigio); margin-top:10px; line-height:1.45}
+  .caricamento{text-align:center; color:var(--grigio); padding:30px 0}
+</style>
+</head>
+<body>
+
+<h1>Logbook voli</h1>
+<div id="avviso"></div>
+<div id="corpo" class="caricamento">Caricamento…</div>
+
+<!-- Contenuto reale, mostrato solo quando i dati sono arrivati -->
+<div id="app" class="nascosto">
+
+  <!-- ============================ RECENCY ============================ -->
+  <div class="card">
+    <h2>Riepilogo e recency</h2>
+    <div class="griglia" id="recency"></div>
+    <div class="nota" id="notaRecency"></div>
+  </div>
+
+  <!-- ========================== NUOVO VOLO =========================== -->
+  <div class="card">
+    <h2>Nuovo volo</h2>
+
+    <label for="data">Data del volo</label>
+    <input type="date" id="data">
+
+    <label for="velivolo">Velivolo</label>
+    <select id="velivolo"></select>
+    <input type="text" id="velivoloAltro" class="nascosto" placeholder="Marche, es. D-1234"
+           style="margin-top:8px" autocapitalize="characters">
+
+    <!-- Funzione a bordo: due pulsanti, perché è il campo che si tocca più
+         spesso e un menu a tendina sarebbe più lento da usare in volo. -->
+    <label>Funzione a bordo</label>
+    <div class="segmenti" id="funzione">
+      <button type="button" class="seg attivo" data-valore="PIC">PIC</button>
+      <button type="button" class="seg" data-valore="DUAL">DUAL</button>
+    </div>
+
+    <div class="due">
+      <div>
+        <label for="dep">ICAO partenza</label>
+        <select id="dep"></select>
+        <input type="text" id="depAltro" class="nascosto" placeholder="ICAO"
+               maxlength="4" style="margin-top:8px" autocapitalize="characters">
+      </div>
+      <div>
+        <label for="arr">ICAO arrivo</label>
+        <select id="arr"></select>
+        <input type="text" id="arrAltro" class="nascosto" placeholder="ICAO"
+               maxlength="4" style="margin-top:8px" autocapitalize="characters">
+      </div>
+    </div>
+
+    <div class="due">
+      <div>
+        <label for="dec">Ora decollo</label>
+        <input type="time" id="dec">
+      </div>
+      <div>
+        <label for="att">Ora atterraggio</label>
+        <input type="time" id="att">
+      </div>
+    </div>
+
+    <div class="durata" id="durata">Durata: —</div>
+
+    <label for="quota">Quota di sgancio (m)</label>
+    <input type="number" id="quota" inputmode="numeric" min="0" step="10" placeholder="es. 600">
+
+    <label for="note">Note (facoltative)</label>
+    <textarea id="note" maxlength="500"></textarea>
+
+    <button id="salva">Registra volo</button>
+  </div>
+
+  <!-- ========================= ULTIMI VOLI =========================== -->
+  <div class="card">
+    <h2>Ultimi voli registrati</h2>
+    <div id="ultimi"></div>
+  </div>
+</div>
+
+<script>
+/* ======================================================================
+   Ponte verso il server: google.script.run avvolto in una Promise, così
+   il codice qui sotto si legge con async/await.
+   ====================================================================== */
+function srv(fn){
+  var args = Array.prototype.slice.call(arguments,1);
+  return new Promise(function(risolvi, rifiuta){
+    google.script.run.withSuccessHandler(risolvi).withFailureHandler(rifiuta)[fn].apply(null,args);
+  });
+}
+
+var STATO = null;   // ultima fotografia dei dati arrivata dal server
+
+/* ------------------------------ avvisi ------------------------------ */
+function avvisa(testo, tipo){
+  var box = document.getElementById('avviso');
+  if(!testo){ box.innerHTML=''; return; }
+  box.innerHTML = '<div class="msg '+(tipo||'ok')+'"></div>';
+  box.firstChild.textContent = testo;   // textContent: niente HTML iniettato
+  window.scrollTo(0,0);
+}
+
+/* ------------------------- utility di formato ----------------------- */
+function itDate(iso){
+  var p = String(iso||'').split('-');
+  return p.length===3 ? p[2]+'/'+p[1]+'/'+p[0] : (iso||'');
+}
+function hhmm(min){
+  min = Math.round(min||0);
+  return Math.floor(min/60)+':'+('0'+(min%60)).slice(-2);
+}
+
+/* ====================================================================
+   RECENCY: quattro riquadri. Il colore dice se la soglia è raggiunta,
+   la riga in basso dice fino a quando regge (o quanto manca).
+   ==================================================================== */
+function disegnaRecency(r){
+  function box(etichetta, valore, sotto, classe){
+    return '<div class="box '+(classe||'')+'">'+
+             '<div class="etichetta">'+etichetta+'</div>'+
+             '<div class="valore">'+valore+'</div>'+
+             '<div class="sotto">'+sotto+'</div>'+
+           '</div>';
+  }
+  function scad(o, mancaTesto){
+    return o.ok
+      ? (o.scadenza ? 'ok fino al '+itDate(o.scadenza) : 'requisito soddisfatto')
+      : mancaTesto;
+  }
+
+  // Se il calcolo considera solo i voli da pilota responsabile, lo si dice
+  // nelle etichette: altrimenti i numeri sembrano sbagliati.
+  var soloPic = r.soloPic ? ' (PIC)' : '';
+
+  document.getElementById('recency').innerHTML =
+    box('Ore totali', r.totale.testo,
+        r.totale.voli+' voli · di cui PIC '+r.totale.testoPic+' in '+r.totale.voliPic+' voli', 'pieno') +
+    box('Ore ultimi 24 mesi'+soloPic, r.ore24.testo,
+        'minimo '+r.ore24.minimoTesto+' · '+scad(r.ore24, 'mancano '+hhmm(r.ore24.mancante)),
+        r.ore24.ok?'ok':'ko') +
+    box('Voli ultimi 24 mesi'+soloPic, r.voli24.valore,
+        'minimo '+r.voli24.minimo+' · '+scad(r.voli24, 'mancano '+r.voli24.mancante),
+        r.voli24.ok?'ok':'ko') +
+    box('Voli ultimi '+r.voliBreve.giorni+' giorni'+soloPic, r.voliBreve.valore,
+        'minimo '+r.voliBreve.minimo+' per portare passeggeri · '+
+        scad(r.voliBreve, 'mancano '+r.voliBreve.mancante),
+        (r.voliBreve.ok?'ok':'ko')+' pieno');
+
+  document.getElementById('notaRecency').textContent =
+    'Conteggi al ' + itDate(r.oggi) + ': finestra di 24 mesi dal ' + itDate(r.finestra24) +
+    ', finestra breve dal ' + itDate(r.finestraBreve) + '. ' +
+    (r.soloPic
+      ? 'I tre requisiti considerano solo i voli con funzione PIC; i voli DUAL entrano nelle ore totali ma non nella recency.'
+      : 'I requisiti considerano tutti i voli, PIC e DUAL insieme.') +
+    ' Le date "ok fino al" indicano quando il volo che oggi regge il requisito esce dalla finestra. ' +
+    'È un promemoria personale, non sostituisce la verifica formale dei requisiti.';
+}
+
+/* ====================================================================
+   Menu a tendina con voce "Altro…" per i valori non in anagrafica.
+   ==================================================================== */
+function riempiSelect(idSelect, idAltro, voci, selezionato){
+  var sel = document.getElementById(idSelect);
+  sel.innerHTML = voci.map(function(v){
+    return '<option value="'+v.valore+'"'+(v.valore===selezionato?' selected':'')+'>'+v.testo+'</option>';
+  }).join('') + '<option value="__ALTRO__">Altro…</option>';
+
+  sel.onchange = function(){
+    var altro = document.getElementById(idAltro);
+    var libero = sel.value==='__ALTRO__';
+    altro.classList.toggle('nascosto', !libero);
+    if(libero) altro.focus(); else altro.value='';
+  };
+}
+
+/* ====================================================================
+   Selettore PIC / DUAL: due pulsanti, uno solo attivo.
+   ==================================================================== */
+function impostaFunzione(valore){
+  Array.prototype.forEach.call(document.querySelectorAll('#funzione .seg'), function(b){
+    b.classList.toggle('attivo', b.getAttribute('data-valore')===valore);
+  });
+}
+function funzioneScelta(){
+  var attivo = document.querySelector('#funzione .seg.attivo');
+  return attivo ? attivo.getAttribute('data-valore') : 'PIC';
+}
+
+/** Valore effettivo di un campo con tendina + casella libera. */
+function valoreCampo(idSelect, idAltro){
+  var sel = document.getElementById(idSelect);
+  return sel.value==='__ALTRO__'
+    ? document.getElementById(idAltro).value.trim().toUpperCase()
+    : sel.value;
+}
+
+/* ====================================================================
+   Durata calcolata mentre si digita (il server la ricalcola comunque:
+   questo serve solo a farsi accorgere subito degli orari invertiti).
+   ==================================================================== */
+function aggiornaDurata(){
+  var box = document.getElementById('durata');
+  var a = document.getElementById('dec').value;
+  var b = document.getElementById('att').value;
+  if(!a || !b){ box.className='durata'; box.textContent='Durata: —'; return; }
+  var ma = (+a.split(':')[0])*60 + (+a.split(':')[1]);
+  var mb = (+b.split(':')[0])*60 + (+b.split(':')[1]);
+  if(mb<=ma){
+    box.className='durata errore';
+    box.textContent='L’atterraggio deve essere successivo al decollo';
+  }else{
+    box.className='durata';
+    box.textContent='Durata: '+hhmm(mb-ma);
+  }
+}
+
+/* ========================== ULTIMI VOLI ============================= */
+function disegnaUltimi(voli){
+  var box = document.getElementById('ultimi');
+  if(!voli.length){ box.innerHTML='<div class="nota">Nessun volo registrato.</div>'; return; }
+
+  box.innerHTML = voli.map(function(v){
+    // Etichetta di stato del travaso sul file condiviso, se pertinente.
+    var tag = '';
+    if(v.sincronizzato) tag = '<span class="tag">condiviso</span>';
+    else if(/DA CORREGGERE/i.test(v.esito)) tag = '<span class="tag ko">da correggere</span>';
+    // I voli DUAL sono evidenziati: non contano per la recency.
+    if(v.funzione==='DUAL') tag = '<span class="tag dual">DUAL</span>' + tag;
+
+    return '<div class="volo">'+
+             '<div class="sx"><strong>'+itDate(v.data)+'</strong>'+tag+
+               '<div>'+v.marche+(v.modello?' · '+v.modello:'')+' · '+v.dep+'→'+v.arr+
+               (v.quota!==''&&v.quota!==null?' · sgancio '+v.quota+' m':'')+'</div>'+
+             '</div>'+
+             '<div class="dx"><div class="ore">'+hhmm(v.minuti)+'</div>'+
+               '<div style="font-size:12px;color:#6b7280">'+v.oraDec+'–'+v.oraAtt+'</div>'+
+             '</div>'+
+           '</div>';
+  }).join('');
+}
+
+/* ====================== APPLICAZIONE DELLO STATO ===================== */
+function applica(stato, primaVolta){
+  STATO = stato;
+  disegnaRecency(stato.recency);
+  disegnaUltimi(stato.ultimi);
+
+  if(primaVolta){
+    // Data: oggi per default, ma resta modificabile (volo caricato il giorno dopo).
+    var data = document.getElementById('data');
+    data.value = stato.oggi;
+    data.max   = stato.oggi;          // niente voli futuri
+
+    // Velivoli dall'anagrafica; il primo è quello in comproprietà.
+    var voci = stato.velivoli.map(function(v){
+      return { valore:v.marche, testo:v.marche+(v.modello?' — '+v.modello:'')+(v.condiviso?' (condiviso)':'') };
+    });
+    riempiSelect('velivolo','velivoloAltro',voci, voci.length?voci[0].valore:'');
+
+    // ICAO: anagrafica del file condiviso + codici già usati, default LIMA.
+    var aer = stato.aeroporti.map(function(a){
+      return { valore:a.icao, testo:a.icao+(a.nome?' — '+a.nome:'') };
+    });
+    riempiSelect('dep','depAltro',aer,stato.icaoDefault);
+    riempiSelect('arr','arrAltro',aer,stato.icaoDefault);
+
+    // Funzione a bordo preselezionata (LOG_CONFIG.FUNZIONE_DEFAULT).
+    impostaFunzione(stato.funzioneDefault);
+
+    if(!stato.fileCondivisoConfigurato){
+      avvisa('Manca l’ID del file condiviso in LOG_CONFIG: i voli sull’aliante in '+
+             'comproprietà verranno salvati qui ma non copiati nel file di prenotazione.','att');
+    }
+  }
+}
+
+/* ============================ SALVATAGGIO =========================== */
+async function salva(){
+  var bottone = document.getElementById('salva');
+  var payload = {
+    data:   document.getElementById('data').value,
+    marche: valoreCampo('velivolo','velivoloAltro'),
+    dep:    valoreCampo('dep','depAltro'),
+    arr:    valoreCampo('arr','arrAltro'),
+    oraDec: document.getElementById('dec').value,
+    oraAtt: document.getElementById('att').value,
+    quota:  document.getElementById('quota').value,
+    funzione: funzioneScelta(),
+    note:   document.getElementById('note').value
+  };
+
+  // Controlli minimi lato client: il server li ripete comunque tutti.
+  if(!payload.data)   return avvisa('Indica la data del volo.','err');
+  if(!payload.marche) return avvisa('Indica il velivolo.','err');
+  if(!payload.oraDec || !payload.oraAtt) return avvisa('Indica gli orari di decollo e atterraggio.','err');
+
+  bottone.disabled = true;
+  bottone.textContent = 'Salvataggio…';
+  avvisa('');
+  try{
+    var stato = await srv('logSalvaVolo', payload);
+    applica(stato, false);
+    avvisa(stato.messaggio, /ATTENZIONE/.test(stato.messaggio) ? 'att' : 'ok');
+    // Si svuota solo ciò che cambia da volo a volo: data e velivolo restano.
+    ['dec','att','quota','note'].forEach(function(id){ document.getElementById(id).value=''; });
+    aggiornaDurata();
+  }catch(err){
+    avvisa(err.message || 'Errore imprevisto.','err');
+  }finally{
+    bottone.disabled = false;
+    bottone.textContent = 'Registra volo';
+  }
+}
+
+/* =============================== AVVIO ============================== */
+(async function(){
+  try{
+    var stato = await srv('logBootstrap');
+    document.getElementById('corpo').classList.add('nascosto');
+    document.getElementById('app').classList.remove('nascosto');
+    applica(stato, true);
+
+    document.getElementById('dec').addEventListener('input', aggiornaDurata);
+    document.getElementById('att').addEventListener('input', aggiornaDurata);
+    document.getElementById('salva').addEventListener('click', salva);
+
+    // PIC / DUAL: il pulsante toccato diventa l'unico attivo.
+    Array.prototype.forEach.call(document.querySelectorAll('#funzione .seg'), function(b){
+      b.addEventListener('click', function(){ impostaFunzione(b.getAttribute('data-valore')); });
+    });
+  }catch(err){
+    document.getElementById('corpo').textContent = 'Errore: ' + (err.message||err);
+  }
+})();
+</script>
+</body>
+</html>

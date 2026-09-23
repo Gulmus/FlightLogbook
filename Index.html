@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  PRENOTAZIONE ALIANTE CONDIVISO — interfaccia web app
+  File HTML da creare nel progetto Apps Script con nome esatto "Index".
+  Prenotazione a giorno singolo; ogni socio puo' rimuovere o sovrascrivere il
+  giorno di un altro socio previa conferma; rendiconto volo a 4 campi.
+-->
+<style>
+  :root{
+    color-scheme: light;
+    --bg:#f5f6f8; --card:#fff; --ink:#14161a; --muted:#6b7280;
+    --line:#e4e7ec; --accent:#1f4fd8; --danger:#b42318; --ok:#067647; --warn:#b54708;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       font-size:15px;line-height:1.45}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 16px;
+         position:sticky;top:0;z-index:20}
+  header h1{margin:0;font-size:16px;letter-spacing:-.01em}
+  header .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+  main{max-width:720px;margin:0 auto;padding:14px 14px 40px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+        padding:14px;margin-bottom:14px}
+  .card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .tabs{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);
+        border-radius:999px;padding:4px;margin:0 auto 14px;max-width:720px}
+  .tabs button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:999px;
+        font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+  .tabs button.on{background:var(--ink);color:#fff}
+
+  /* ---- calendario ---- */
+  .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .cal-nav strong{font-size:15px;text-transform:capitalize}
+  .cal-nav button{border:1px solid var(--line);background:#fff;border-radius:10px;
+        width:38px;height:34px;font-size:17px;cursor:pointer}
+  .dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+  .dow div{text-align:center;font-size:11px;color:var(--muted);font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .day{aspect-ratio:1/1;border:1px solid var(--line);border-radius:10px;background:#fff;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;
+       font-size:13px;cursor:pointer;position:relative;padding:2px;overflow:hidden;user-select:none}
+  .day.void{border:0;background:transparent;cursor:default}
+  .day.past{background:#fafafa;color:#b9bec7}
+  .day.today{outline:2px solid var(--ink);outline-offset:-2px;font-weight:700}
+  .day .tag{font-size:9px;line-height:1.1;margin-top:2px;font-weight:700;max-width:100%;
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .day.busy{color:#fff}
+  .day.busy.past{opacity:.55}
+  .day.assign::after{content:"";position:absolute;top:3px;right:3px;width:6px;height:6px;
+       border-radius:50%;background:#fff;opacity:.9}
+  .day.done::before{content:"✓";position:absolute;bottom:2px;right:4px;font-size:9px;opacity:.9}
+  .day.sel{outline:3px solid var(--accent);outline-offset:-3px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;font-size:12px;color:var(--muted)}
+  .legend span i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
+
+  /* ---- form ---- */
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+  input,textarea,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;
+       font-size:15px;font-family:inherit;background:#fff}
+  textarea{min-height:56px;resize:vertical}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  button.btn{border:0;border-radius:11px;padding:11px 14px;font-size:14.5px;font-weight:600;
+       cursor:pointer;background:var(--ink);color:#fff}
+  button.btn.alt{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  button.btn.danger{background:#fff;color:var(--danger);border:1px solid #f3c6c2}
+  button.btn:disabled{opacity:.5;cursor:default}
+  .actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+
+  /* ---- liste ---- */
+  .item{border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:9px}
+  .item .top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .item .who{font-weight:700;font-size:14px}
+  .item .when{font-size:13px;color:var(--muted)}
+  .item .note{font-size:13px;margin-top:5px;color:#3f4653;white-space:pre-wrap}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;
+       border:1px solid var(--line);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .badge.mine{background:#eef2ff;border-color:#c7d2fe;color:#3730a3}
+  .badge.assign{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+  .msg{padding:10px 12px;border-radius:10px;font-size:13.5px;margin-bottom:10px;display:none}
+  .msg.err{display:block;background:#fef3f2;border:1px solid #fecdca;color:var(--danger)}
+  .msg.ok{display:block;background:#ecfdf3;border:1px solid #abefc6;color:var(--ok)}
+  .empty{color:var(--muted);font-size:13.5px;padding:6px 0}
+  .stat{display:flex;justify-content:space-between;font-size:13.5px;padding:5px 0;
+       border-bottom:1px dashed var(--line)}
+  .stat:last-child{border:0}
+  .durata{margin-top:12px;padding:10px 12px;background:#f1f5ff;border:1px solid #d5e0ff;
+       border-radius:10px;font-size:14px}
+  .durata b{font-size:17px}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+  .hide{display:none!important}
+  .spinner{display:inline-block;width:16px;height:16px;border:2px solid #d1d5db;
+       border-top-color:var(--ink);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="titolo">Prenotazioni</h1>
+  <div class="sub" id="sottotitolo">caricamento…</div>
+</header>
+
+<!-- =================== ACCESSO DI RISERVA (email + PIN) =================== -->
+<main id="vLogin" class="hide">
+  <div class="card">
+    <h2>Accesso</h2>
+    <div class="msg" id="loginMsg"></div>
+    <label>Email</label>
+    <input id="loginEmail" type="email" autocomplete="username" placeholder="nome@esempio.it">
+    <label>PIN</label>
+    <input id="loginPin" type="password" inputmode="numeric" autocomplete="current-password">
+    <div class="actions"><button class="btn" id="btnLogin">Entra</button></div>
+    <div class="hint">Il PIN e' quello indicato nel foglio "Utenti".</div>
+  </div>
+</main>
+
+<!-- ============================ APPLICAZIONE ============================= -->
+<main id="vApp" class="hide">
+  <div class="tabs">
+    <button data-tab="cal" class="on">Calendario</button>
+    <button data-tab="list">Giorni</button>
+    <button data-tab="voli">Voli <span id="cntRend"></span></button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <!-- ---------------------------- CALENDARIO ---------------------------- -->
+  <section id="tab-cal">
+    <div class="card">
+      <div class="cal-nav">
+        <button id="prevM" title="Mese precedente">‹</button>
+        <strong id="meseLabel"></strong>
+        <button id="nextM" title="Mese successivo">›</button>
+      </div>
+      <div class="dow"><div>L</div><div>M</div><div>M</div><div>G</div><div>V</div><div>S</div><div>D</div></div>
+      <div class="grid" id="grid"></div>
+      <div class="legend" id="legend"></div>
+      <div class="hint">Tocca un giorno di oggi o futuro per prenotarlo, un giorno passato libero per
+        registrare un volo gia' effettuato, un giorno occupato per rimuoverlo / sovrascriverlo.</div>
+    </div>
+
+    <!-- Pannello giorno LIBERO -->
+    <div class="card hide" id="cardLibero">
+      <h2 id="titoloLibero">Prenota</h2>
+      <label>Pilota</label>
+      <select id="fPilota"></select>
+      <label>Note (opzionale)</label>
+      <textarea id="fNote" placeholder="Traino, istruttore, orario previsto…"></textarea>
+      <div class="actions">
+        <button class="btn" id="btnPrenota">Conferma prenotazione</button>
+        <button class="btn alt" id="btnChiudiLibero">Chiudi</button>
+      </div>
+    </div>
+
+    <!-- Pannello giorno PASSATO e libero: volo effettuato senza prenotazione.
+         Gli stessi quattro campi del rendiconto, piu' pilota e note. -->
+    <div class="card hide" id="cardPassato">
+      <h2 id="titoloPassato">Volo effettuato</h2>
+      <div class="hint" id="hintPassato"></div>
+      <label>Pilota</label>
+      <select id="pPilota"></select>
+      <div class="row">
+        <div>
+          <label>ICAO decollo</label>
+          <select id="pDep"></select>
+          <input id="pDepAltro" class="hide" placeholder="ICAO (4 lettere)" maxlength="4" style="margin-top:6px">
+        </div>
+        <div>
+          <label>ICAO atterraggio</label>
+          <select id="pArr"></select>
+          <input id="pArrAltro" class="hide" placeholder="ICAO (4 lettere)" maxlength="4" style="margin-top:6px">
+        </div>
+      </div>
+      <div class="row">
+        <div><label>Ora decollo</label><input id="pDec" type="time" step="60"></div>
+        <div><label>Ora atterraggio</label><input id="pAtt" type="time" step="60"></div>
+      </div>
+      <div class="durata">Durata volo: <b id="pDurataTxt">—</b></div>
+      <label>Note (opzionale)</label>
+      <textarea id="pNote" placeholder="Traino, istruttore, fuori campo…"></textarea>
+      <div class="actions">
+        <button class="btn" id="btnRegistraPassato">Registra volo</button>
+        <button class="btn alt" id="btnChiudiPassato">Chiudi</button>
+      </div>
+    </div>
+
+    <!-- Pannello giorno OCCUPATO -->
+    <div class="card hide" id="cardOccupato">
+      <h2 id="titoloOccupato">Giorno occupato</h2>
+      <div id="dettaglioOccupato"></div>
+      <div id="zonaSovrascrivi">
+        <label>Sovrascrivi assegnando il giorno a</label>
+        <select id="sPilota"></select>
+        <label>Note (opzionale)</label>
+        <textarea id="sNote"></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnSovrascrivi">Sovrascrivi</button>
+        <button class="btn danger" id="btnRimuovi">Rimuovi e libera il giorno</button>
+        <button class="btn alt" id="btnChiudiOccupato">Chiudi</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Riepilogo <span id="annoLabel"></span></h2>
+      <div id="stats"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------- ELENCO PRENOTAZIONI ---------------------- -->
+  <section id="tab-list" class="hide">
+    <div class="card">
+      <h2>Prossimi giorni</h2>
+      <div id="lista"></div>
+    </div>
+    <div class="card">
+      <h2>Storico recente</h2>
+      <div id="storico"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------- VOLI ------------------------------- -->
+  <section id="tab-voli" class="hide">
+    <div class="card">
+      <h2>Voli da registrare</h2>
+      <div id="rendList"></div>
+      <div class="hint">Il rendiconto si puo' compilare in qualsiasi momento a partire dal giorno del volo.</div>
+    </div>
+
+    <!-- Modulo rendiconto: 4 dati + durata calcolata -->
+    <div class="card hide" id="cardVolo">
+      <h2 id="voloTitolo">Dati del volo</h2>
+      <div class="row">
+        <div>
+          <label>ICAO decollo</label>
+          <select id="vDep"></select>
+          <input id="vDepAltro" class="hide" placeholder="ICAO (4 lettere)" maxlength="4" style="margin-top:6px">
+        </div>
+        <div>
+          <label>ICAO atterraggio</label>
+          <select id="vArr"></select>
+          <input id="vArrAltro" class="hide" placeholder="ICAO (4 lettere)" maxlength="4" style="margin-top:6px">
+        </div>
+      </div>
+      <div class="row">
+        <div><label>Ora decollo</label><input id="vDec" type="time" step="60"></div>
+        <div><label>Ora atterraggio</label><input id="vAtt" type="time" step="60"></div>
+      </div>
+      <div class="durata" id="durataBox">Durata volo: <b id="durataTxt">—</b></div>
+      <div class="actions">
+        <button class="btn" id="btnSalvaVolo">Registra volo</button>
+        <button class="btn alt" id="btnChiudiVolo">Chiudi</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* =========================== STATO LATO CLIENT =========================== */
+
+// Credenziali del percorso di riserva (email+PIN), ricordate sul dispositivo.
+var AUTH = { email:'', pin:'' };
+try {
+  var saved = localStorage.getItem('auth_aliante');
+  if (saved) AUTH = JSON.parse(saved);
+} catch(e){}
+
+var D = null;              // fotografia dei dati ricevuta dal server
+var meseCorrente = null;   // {a: anno, m: mese 0-11} mostrato nel calendario
+var giornoSel = null;      // giorno su cui si sta operando ('yyyy-mm-dd')
+var voloId = null;         // prenotazione in fase di rendiconto
+
+var MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio',
+            'agosto','settembre','ottobre','novembre','dicembre'];
+
+/* ================================ HELPER ================================= */
+
+function $(id){ return document.getElementById(id); }
+
+/**
+ * Wrapper a promesse su google.script.run: passa sempre AUTH come primo
+ * argomento, come si aspettano le funzioni del backend.
+ */
+function srv(fn){
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function(resolve, reject){
+    var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+    r[fn].apply(r, [AUTH].concat(args));
+  });
+}
+
+function pad(n){ return (n<10?'0':'')+n; }
+function isoOf(a,m,g){ return a+'-'+pad(m+1)+'-'+pad(g); }
+function itDate(iso){ if(!iso) return ''; var p=iso.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
+function addDays(iso,n){
+  var p=iso.split('-'), d=new Date(Date.UTC(+p[0],+p[1]-1,+p[2]+n));
+  return d.getUTCFullYear()+'-'+pad(d.getUTCMonth()+1)+'-'+pad(d.getUTCDate());
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/** Messaggio in testa alla pagina: 'ok' sparisce, 'err' resta. */
+function info(testo, tipo){
+  var m = $('msg');
+  m.className = 'msg ' + (tipo || 'ok');
+  m.textContent = testo;
+  if (tipo !== 'err') setTimeout(function(){ m.className = 'msg'; }, 4500);
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+/** Blocca i pulsanti durante le chiamate al server. */
+function busy(on){
+  document.querySelectorAll('button.btn').forEach(function(b){ b.disabled = on; });
+  document.body.style.cursor = on ? 'progress' : '';
+}
+
+/** Data minima prenotabile (oggi + eventuale preavviso). */
+function minData(){ return addDays(D.config.oggi, D.config.preavviso); }
+
+/* ================================ AVVIO ================================== */
+
+function boot(){
+  google.script.run.withSuccessHandler(function(res){
+    if (res.ok){
+      D = res.dati;
+      applica();
+    } else if (res.codice === 'LOGIN_NECESSARIO'){
+      $('titolo').textContent = 'Prenotazioni ' + res.nomeBene;
+      $('sottotitolo').textContent = 'accesso richiesto';
+      $('vLogin').classList.remove('hide');
+    } else {
+      $('sottotitolo').textContent = res.messaggio;
+      $('vLogin').classList.remove('hide');
+      $('loginMsg').className = 'msg err';
+      $('loginMsg').textContent = res.messaggio;
+    }
+  }).withFailureHandler(function(err){
+    $('sottotitolo').textContent = 'Errore: ' + err.message;
+  }).getBootstrap(AUTH);
+}
+
+/** Ridisegna tutta l'interfaccia partendo dai dati in D. */
+function applica(){
+  $('vLogin').classList.add('hide');
+  $('vApp').classList.remove('hide');
+  $('titolo').textContent = 'Prenotazioni ' + D.config.nomeBene;
+  $('sottotitolo').textContent = D.utente.nome + ' · ' + D.utente.email;
+  $('annoLabel').textContent = D.config.anno;
+
+  if (!meseCorrente){
+    var p = D.config.oggi.split('-');
+    meseCorrente = { a:+p[0], m:+p[1]-1 };
+  }
+  riempiSelectPiloti();
+  riempiSelectAeroporti();
+  disegnaCalendario();
+  disegnaLista();
+  disegnaStats();
+  disegnaRendiconti();
+}
+
+/** I due menu "pilota" (prenotazione e sovrascrittura). */
+function riempiSelectPiloti(){
+  var html = D.utenti.map(function(u){
+    return '<option value="' + esc(u.email) + '"' +
+      (u.email === D.utente.email ? ' selected' : '') + '>' + esc(u.nome) +
+      (u.email === D.utente.email ? ' (tu)' : '') + '</option>';
+  }).join('');
+  $('fPilota').innerHTML = html;
+  $('sPilota').innerHTML = html;
+  $('pPilota').innerHTML = html;   // registrazione di un volo passato
+}
+
+/** Menu ICAO del rendiconto e della registrazione a posteriori. */
+function riempiSelectAeroporti(){
+  var opzioni = D.aeroporti.map(function(a){
+    return '<option value="' + esc(a.icao) + '">' + esc(a.icao) +
+      (a.nome ? ' — ' + esc(a.nome) : '') + '</option>';
+  }).join('');
+  if (D.config.icaoLibero) opzioni += '<option value="__ALTRO__">Altro…</option>';
+  ['vDep','vArr','pDep','pArr'].forEach(function(id){
+    $(id).innerHTML = opzioni;
+    $(id).value = D.config.icaoDefault;   // default LIMA
+  });
+}
+
+/* ============================== CALENDARIO =============================== */
+
+/** Mappa 'yyyy-mm-dd' -> prenotazione che occupa quel giorno. */
+function occupazione(){
+  var map = {};
+  D.prenotazioni.forEach(function(p){
+    if (p.stato !== 'ATTIVA' && p.stato !== 'CONCLUSA') return; // stati storici: giorno libero
+    map[p.data] = p;
+  });
+  return map;
+}
+
+function coloreUtente(email){
+  var u = D.utenti.filter(function(x){ return x.email === email; })[0];
+  return u ? u.colore : '#6b7280';
+}
+
+function nomeBreve(p){
+  var u = D.utenti.filter(function(x){ return x.email === p.email; })[0];
+  var n = (u && u.nome) || p.nome || p.email || '—';
+  return n.split(' ')[0];
+}
+
+function disegnaCalendario(){
+  var occ = occupazione();
+  var a = meseCorrente.a, m = meseCorrente.m;
+  $('meseLabel').textContent = MESI[m] + ' ' + a;
+
+  // Griglia con lunedi' in prima colonna.
+  var offset = (new Date(Date.UTC(a, m, 1)).getUTCDay() + 6) % 7;
+  var giorniMese = new Date(Date.UTC(a, m+1, 0)).getUTCDate();
+
+  var html = '';
+  for (var i = 0; i < offset; i++) html += '<div class="day void"></div>';
+
+  for (var g = 1; g <= giorniMese; g++){
+    var iso = isoOf(a, m, g);
+    var p = occ[iso];
+    var cls = 'day', style = '', tag = '';
+
+    if (iso < D.config.oggi) cls += ' past';
+    if (iso === D.config.oggi) cls += ' today';
+    if (p){
+      cls += ' busy';
+      if (p.tipo === 'ASSEGNAZIONE') cls += ' assign';   // pallino bianco
+      if (p.rendicontato) cls += ' done';                // spunta = volo registrato
+      style = 'background:' + coloreUtente(p.email) + ';border-color:' + coloreUtente(p.email) + ';';
+      tag = '<span class="tag">' + esc(nomeBreve(p)) + '</span>';
+    }
+    if (giornoSel === iso) cls += ' sel';
+
+    html += '<div class="' + cls + '" style="' + style + '" data-iso="' + iso + '">' + g + tag + '</div>';
+  }
+  $('grid').innerHTML = html;
+
+  $('grid').querySelectorAll('.day[data-iso]').forEach(function(el){
+    el.addEventListener('click', function(){ clickGiorno(el.dataset.iso); });
+  });
+
+  $('legend').innerHTML = D.utenti.map(function(u){
+      return '<span><i style="background:' + u.colore + '"></i>' + esc(u.nome) + '</span>';
+    }).join('') +
+    '<span><i style="background:#fff;border:1px solid #e4e7ec"></i>libero</span>' +
+    '<span>· pallino = assegnazione annuale · ✓ = volo registrato</span>';
+}
+
+/**
+ * Un solo tap gestisce tutti i casi:
+ *   giorno occupato            -> pannello rimozione / sovrascrittura;
+ *   oggi o futuro e libero     -> pannello prenotazione;
+ *   giorno passato e libero    -> registrazione di un volo gia' effettuato.
+ * Con PREAVVISO_MINIMO_GIORNI > 0 restano i giorni gia' iniziati ma non ancora
+ * prenotabili: quelli danno un messaggio, perche' non sono ne' passati ne' liberi.
+ */
+function clickGiorno(iso){
+  var occ = occupazione();
+  var p = occ[iso];
+  giornoSel = iso;
+
+  if (p){
+    apriPannelloOccupato(iso, p);
+  } else if (iso < D.config.oggi){
+    apriPannelloPassato(iso);
+  } else if (iso < minData()){
+    giornoSel = null;
+    info('Il ' + itDate(iso) + ' non e\' prenotabile: serve un preavviso di ' +
+         D.config.preavviso + ' giorni.', 'err');
+  } else {
+    apriPannelloLibero(iso);
+  }
+  disegnaCalendario();
+}
+
+/* ---------------------- pannello giorno libero --------------------------- */
+
+function apriPannelloLibero(iso){
+  $('cardOccupato').classList.add('hide');
+  $('cardPassato').classList.add('hide');
+  $('titoloLibero').textContent = 'Prenota ' + itDate(iso);
+  $('fPilota').value = D.utente.email;
+  $('fNote').value = '';
+  var c = $('cardLibero');
+  c.classList.remove('hide');
+  c.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+function chiudiPannelli(){
+  $('cardLibero').classList.add('hide');
+  $('cardOccupato').classList.add('hide');
+  $('cardPassato').classList.add('hide');
+  giornoSel = null;
+  disegnaCalendario();
+}
+
+function prenota(){
+  busy(true);
+  srv('prenotaGiorno', { data: giornoSel, email: $('fPilota').value, note: $('fNote').value })
+    .then(function(d){
+      D = d; busy(false); chiudiPannelli(); applica();
+      info('Giorno prenotato.');
+    })
+    .catch(function(err){ busy(false); info(err.message, 'err'); });
+}
+
+/* --------------------- pannello giorno occupato -------------------------- */
+
+function apriPannelloOccupato(iso, p){
+  $('cardLibero').classList.add('hide');
+  $('cardPassato').classList.add('hide');
+  $('titoloOccupato').textContent = itDate(iso) + ' — occupato';
+
+  var etichetta = p.tipo === 'ASSEGNAZIONE' ? 'Assegnazione annuale'
+                : p.tipo === 'RETROATTIVA'  ? 'Volo registrato a posteriori'
+                : 'Prenotazione';
+  $('dettaglioOccupato').innerHTML =
+    '<div class="item" style="border-left:4px solid ' + coloreUtente(p.email) + '">' +
+      '<div class="top"><span class="who">' + esc(p.nome || p.email) + '</span>' +
+      (p.mia ? '<span class="badge mine">tu</span>' : '') + '</div>' +
+      '<div class="when">' + etichetta + (p.rendicontato ? ' · volo registrato' : '') + '</div>' +
+      (p.note ? '<div class="note">' + esc(p.note) + '</div>' : '') +
+    '</div>';
+
+  // Un volo gia' registrato non si tocca dall'app (si corregge nel foglio).
+  var bloccato = p.rendicontato || p.stato === 'CONCLUSA';
+  // La sovrascrittura ha senso solo per oggi e per il futuro.
+  var sovrascrivibile = !bloccato && iso >= minData();
+
+  $('zonaSovrascrivi').classList.toggle('hide', !sovrascrivibile);
+  $('btnSovrascrivi').classList.toggle('hide', !sovrascrivibile);
+  $('btnRimuovi').classList.toggle('hide', bloccato);
+  if (sovrascrivibile){
+    $('sPilota').value = D.utente.email;
+    $('sNote').value = '';
+  }
+  $('cardOccupato').dataset.id = p.id;
+  $('cardOccupato').dataset.tipo = p.tipo;
+  $('cardOccupato').dataset.chi = p.nome || p.email;
+
+  var c = $('cardOccupato');
+  c.classList.remove('hide');
+  c.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+function rimuovi(){
+  var d = $('cardOccupato').dataset;
+  var testo = d.tipo === 'ASSEGNAZIONE'
+    ? 'Rimuovere l\'ASSEGNAZIONE ANNUALE di ' + d.chi + ' del ' + itDate(giornoSel) + '?\n\nIl giorno tornera\' libero per tutti.'
+    : 'Rimuovere la prenotazione di ' + d.chi + ' del ' + itDate(giornoSel) + '?';
+  if (!confirm(testo)) return;
+
+  busy(true);
+  srv('rimuoviPrenotazione', d.id)
+    .then(function(r){
+      D = r; busy(false); chiudiPannelli(); applica();
+      info('Giorno liberato. Gli interessati ricevono una email.');
+    })
+    .catch(function(err){ busy(false); info(err.message, 'err'); });
+}
+
+function sovrascrivi(){
+  var d = $('cardOccupato').dataset;
+  var nuovo = $('sPilota').options[$('sPilota').selectedIndex].text;
+  var testo = (d.tipo === 'ASSEGNAZIONE'
+      ? 'Attenzione: stai sovrascrivendo un\'ASSEGNAZIONE ANNUALE.\n\n'
+      : '') +
+    'Il ' + itDate(giornoSel) + ' passa da ' + d.chi + ' a ' + nuovo + '.\n\nConfermi?';
+  if (!confirm(testo)) return;
+
+  busy(true);
+  srv('sovrascriviGiorno', { data: giornoSel, email: $('sPilota').value, note: $('sNote').value })
+    .then(function(r){
+      D = r; busy(false); chiudiPannelli(); applica();
+      info('Giorno sovrascritto. Gli interessati ricevono una email.');
+    })
+    .catch(function(err){ busy(false); info(err.message, 'err'); });
+}
+
+/* ------------- pannello giorno passato e libero (volo a posteriori) ------- */
+
+/**
+ * Giorno nel passato che nessuno aveva prenotato: non c'e' niente da prenotare,
+ * quindi si salta direttamente al rendiconto. Il server creera' in un colpo solo
+ * la prenotazione di tipo RETROATTIVA (gia' CONCLUSA) e la riga del volo.
+ */
+function apriPannelloPassato(iso){
+  $('cardLibero').classList.add('hide');
+  $('cardOccupato').classList.add('hide');
+
+  $('titoloPassato').textContent = 'Volo del ' + itDate(iso);
+  $('hintPassato').textContent =
+    'Il ' + itDate(iso) + ' non risulta prenotato da nessuno. Inserendo i dati qui sotto ' +
+    'il volo viene registrato a posteriori: il giorno resta occupato nello storico e la ' +
+    'riga non e\' piu\' modificabile dall\'app.';
+
+  // Di norma si registra un proprio volo, ma resta possibile farlo per un altro socio.
+  $('pPilota').value = D.utente.email;
+
+  // Reset del modulo a quattro campi.
+  $('pDep').value = D.config.icaoDefault;
+  $('pArr').value = D.config.icaoDefault;
+  $('pDepAltro').value = ''; $('pDepAltro').classList.add('hide');
+  $('pArrAltro').value = ''; $('pArrAltro').classList.add('hide');
+  $('pDec').value = ''; $('pAtt').value = '';
+  $('pNote').value = '';
+  aggiornaDurataPassato();
+
+  var c = $('cardPassato');
+  c.classList.remove('hide');
+  c.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+function registraPassato(){
+  var payload = {
+    data: giornoSel,
+    email: $('pPilota').value,
+    note: $('pNote').value,
+    icaoDecollo: leggiIcao('pDep','pDepAltro'),
+    icaoAtterraggio: leggiIcao('pArr','pArrAltro'),
+    oraDecollo: $('pDec').value,
+    oraAtterraggio: $('pAtt').value
+  };
+  if (!payload.oraDecollo || !payload.oraAtterraggio){
+    info('Inserisci ora di decollo e di atterraggio.', 'err'); return;
+  }
+
+  // Conferma esplicita: la registrazione a posteriori non si annulla dall'app.
+  var chi = $('pPilota').options[$('pPilota').selectedIndex].text;
+  if (!confirm('Registrare il volo di ' + chi + ' del ' + itDate(giornoSel) + '?\n\n' +
+               'Il giorno risultera\' occupato e il volo non sara\' piu\' modificabile ' +
+               'dall\'app: eventuali correzioni si fanno nel foglio.')) return;
+
+  busy(true);
+  srv('registraVoloPassato', payload)
+    .then(function(d){
+      D = d; busy(false); chiudiPannelli(); applica();
+      info('Volo registrato.');
+    })
+    .catch(function(err){ busy(false); info(err.message, 'err'); });
+}
+
+/* =============================== ELENCHI ================================= */
+
+function itemHtml(p){
+  // Ogni socio puo' agire su qualunque giorno: i pulsanti non dipendono da chi
+  // e' il titolare, solo dallo stato (un volo registrato e' congelato).
+  var bloccato = p.rendicontato || p.stato === 'CONCLUSA';
+  var attivo = p.stato === 'ATTIVA' || p.stato === 'CONCLUSA';
+  var azioni = (attivo && !bloccato)
+    ? '<div class="actions"><button class="btn alt" data-go="' + p.data + '">Modifica giorno</button></div>'
+    : '';
+  var badges = (p.mia ? '<span class="badge mine">tu</span> ' : '') +
+    (p.tipo === 'ASSEGNAZIONE' ? '<span class="badge assign">assegnazione</span> ' : '') +
+    (p.tipo === 'RETROATTIVA' ? '<span class="badge">a posteriori</span> ' : '') +
+    (p.stato !== 'ATTIVA' ? '<span class="badge">' + esc(p.stato.toLowerCase()) + '</span>' : '');
+
+  return '<div class="item" style="border-left:4px solid ' + coloreUtente(p.email) + '">' +
+    '<div class="top"><span class="who">' + itDate(p.data) + '</span>' + badges + '</div>' +
+    '<div class="when">' + esc(p.nome || p.email) + (p.rendicontato ? ' · volo registrato' : '') + '</div>' +
+    (p.note ? '<div class="note">' + esc(p.note) + '</div>' : '') + azioni + '</div>';
+}
+
+function disegnaLista(){
+  var futuri = D.prenotazioni.filter(function(p){
+    return p.data >= D.config.oggi && p.stato !== 'ANNULLATA' && p.stato !== 'SOSTITUITA' && p.stato !== 'RILASCIATA';
+  });
+  var passati = D.prenotazioni.filter(function(p){
+    return p.data < D.config.oggi && p.stato !== 'ANNULLATA' && p.stato !== 'SOSTITUITA' && p.stato !== 'RILASCIATA';
+  }).reverse();
+
+  $('lista').innerHTML = futuri.length ? futuri.map(itemHtml).join('')
+    : '<div class="empty">Nessun giorno prenotato o assegnato.</div>';
+  $('storico').innerHTML = passati.length ? passati.map(itemHtml).join('')
+    : '<div class="empty">Niente da mostrare.</div>';
+
+  // "Modifica giorno" riporta al calendario sul giorno scelto.
+  document.querySelectorAll('[data-go]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var iso = b.dataset.go, p = iso.split('-');
+      meseCorrente = { a:+p[0], m:+p[1]-1 };
+      vaiTab('cal');
+      clickGiorno(iso);
+    });
+  });
+}
+
+function disegnaStats(){
+  var chiavi = {};
+  Object.keys(D.giorniPerUtente).forEach(function(k){ chiavi[k] = true; });
+  Object.keys(D.minutiPerUtente).forEach(function(k){ chiavi[k] = true; });
+  var lista = Object.keys(chiavi);
+  if (!lista.length){
+    $('stats').innerHTML = '<div class="empty">Nessun dato per l\'anno in corso.</div>';
+    return;
+  }
+  lista.sort(function(a,b){ return (D.giorniPerUtente[b]||0) - (D.giorniPerUtente[a]||0); });
+  $('stats').innerHTML = lista.map(function(k){
+    var u = D.utenti.filter(function(x){ return x.email === k; })[0];
+    var gg = D.giorniPerUtente[k] || 0;
+    var min = D.minutiPerUtente[k] || 0;
+    var ore = pad(Math.floor(min/60)) + ':' + pad(min % 60);
+    return '<div class="stat"><span>' + esc(u ? u.nome : k) + '</span>' +
+      '<strong>' + gg + ' gg · ' + ore + ' h volo</strong></div>';
+  }).join('');
+}
+
+/* ============================== RENDICONTO =============================== */
+
+function disegnaRendiconti(){
+  var n = D.daRendicontare.length;
+  $('cntRend').textContent = n ? '(' + n + ')' : '';
+
+  if (!n){
+    $('rendList').innerHTML = '<div class="empty">Nessun volo in attesa di registrazione.</div>';
+    $('cardVolo').classList.add('hide');
+    return;
+  }
+  $('rendList').innerHTML = D.daRendicontare.map(function(p){
+    var oggi = p.data === D.config.oggi ? '<span class="badge mine">oggi</span>' : '';
+    return '<div class="item"><div class="top"><span class="who">' + itDate(p.data) + '</span>' + oggi + '</div>' +
+      '<div class="when">' + esc(p.nome || p.email) + '</div>' +
+      '<div class="actions"><button class="btn" data-volo="' + p.id + '">Inserisci dati volo</button></div></div>';
+  }).join('');
+
+  document.querySelectorAll('[data-volo]').forEach(function(b){
+    b.addEventListener('click', function(){ apriVolo(b.dataset.volo); });
+  });
+}
+
+function apriVolo(id){
+  voloId = id;
+  var p = D.daRendicontare.filter(function(x){ return x.id === id; })[0];
+  $('voloTitolo').textContent = 'Volo del ' + itDate(p.data) + ' — ' + (p.nome || p.email);
+  // Reset del modulo con i valori di default.
+  $('vDep').value = D.config.icaoDefault;
+  $('vArr').value = D.config.icaoDefault;
+  $('vDepAltro').value = ''; $('vDepAltro').classList.add('hide');
+  $('vArrAltro').value = ''; $('vArrAltro').classList.add('hide');
+  $('vDec').value = ''; $('vAtt').value = '';
+  aggiornaDurata();
+  var c = $('cardVolo');
+  c.classList.remove('hide');
+  c.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+/** Legge un ICAO dal select (o dal campo "Altro…"). */
+function leggiIcao(idSelect, idAltro){
+  var v = $(idSelect).value;
+  if (v === '__ALTRO__') v = $(idAltro).value;
+  return String(v || '').trim().toUpperCase();
+}
+
+/**
+ * Anteprima della durata: lo stesso calcolo viene rifatto dal server.
+ * La funzione e' generica perche' i moduli con gli orari sono due, quello del
+ * rendiconto e quello del volo registrato a posteriori.
+ */
+function aggiornaDurataGen(idDec, idAtt, idTxt){
+  var d = $(idDec).value, a = $(idAtt).value;
+  if (!d || !a){ $(idTxt).textContent = '—'; return; }
+  var md = (+d.split(':')[0]) * 60 + (+d.split(':')[1]);
+  var ma = (+a.split(':')[0]) * 60 + (+a.split(':')[1]);
+  if (ma <= md){ $(idTxt).textContent = 'orari non coerenti'; return; }
+  var diff = ma - md;
+  $(idTxt).textContent = pad(Math.floor(diff/60)) + ':' + pad(diff % 60) +
+    ' (' + Math.floor(diff/60) + ' h ' + (diff % 60) + ' min)';
+}
+
+function aggiornaDurata(){        // modulo rendiconto
+  aggiornaDurataGen('vDec','vAtt','durataTxt');
+}
+function aggiornaDurataPassato(){ // modulo volo a posteriori
+  aggiornaDurataGen('pDec','pAtt','pDurataTxt');
+}
+
+function salvaVolo(){
+  var payload = {
+    id: voloId,
+    icaoDecollo: leggiIcao('vDep','vDepAltro'),
+    icaoAtterraggio: leggiIcao('vArr','vArrAltro'),
+    oraDecollo: $('vDec').value,
+    oraAtterraggio: $('vAtt').value
+  };
+  if (!payload.oraDecollo || !payload.oraAtterraggio){
+    info('Inserisci ora di decollo e di atterraggio.', 'err'); return;
+  }
+  busy(true);
+  srv('salvaVolo', payload)
+    .then(function(d){
+      D = d; busy(false); voloId = null;
+      $('cardVolo').classList.add('hide');
+      applica(); info('Volo registrato.');
+    })
+    .catch(function(err){ busy(false); info(err.message, 'err'); });
+}
+
+/* =========================== TAB E GESTORI EVENTI ======================== */
+
+function vaiTab(nome){
+  document.querySelectorAll('.tabs button').forEach(function(b){
+    b.classList.toggle('on', b.dataset.tab === nome);
+  });
+  ['cal','list','voli'].forEach(function(t){
+    $('tab-' + t).classList.toggle('hide', t !== nome);
+  });
+}
+
+document.querySelectorAll('.tabs button').forEach(function(b){
+  b.addEventListener('click', function(){ vaiTab(b.dataset.tab); });
+});
+
+$('prevM').addEventListener('click', function(){
+  meseCorrente.m--; if (meseCorrente.m < 0){ meseCorrente.m = 11; meseCorrente.a--; }
+  disegnaCalendario();
+});
+$('nextM').addEventListener('click', function(){
+  meseCorrente.m++; if (meseCorrente.m > 11){ meseCorrente.m = 0; meseCorrente.a++; }
+  disegnaCalendario();
+});
+
+$('btnPrenota').addEventListener('click', prenota);
+$('btnChiudiLibero').addEventListener('click', chiudiPannelli);
+$('btnRimuovi').addEventListener('click', rimuovi);
+$('btnSovrascrivi').addEventListener('click', sovrascrivi);
+$('btnChiudiOccupato').addEventListener('click', chiudiPannelli);
+
+// Volo registrato a posteriori su un giorno passato e libero.
+$('btnRegistraPassato').addEventListener('click', registraPassato);
+$('btnChiudiPassato').addEventListener('click', chiudiPannelli);
+$('pDec').addEventListener('change', aggiornaDurataPassato);
+$('pAtt').addEventListener('change', aggiornaDurataPassato);
+$('pDec').addEventListener('input', aggiornaDurataPassato);
+$('pAtt').addEventListener('input', aggiornaDurataPassato);
+$('pDep').addEventListener('change', function(){
+  $('pDepAltro').classList.toggle('hide', this.value !== '__ALTRO__');
+});
+$('pArr').addEventListener('change', function(){
+  $('pArrAltro').classList.toggle('hide', this.value !== '__ALTRO__');
+});
+
+$('btnSalvaVolo').addEventListener('click', salvaVolo);
+$('btnChiudiVolo').addEventListener('click', function(){ $('cardVolo').classList.add('hide'); });
+$('vDec').addEventListener('change', aggiornaDurata);
+$('vAtt').addEventListener('change', aggiornaDurata);
+$('vDec').addEventListener('input', aggiornaDurata);
+$('vAtt').addEventListener('input', aggiornaDurata);
+
+// Il valore "Altro…" mostra il campo per digitare un ICAO non in elenco.
+$('vDep').addEventListener('change', function(){
+  $('vDepAltro').classList.toggle('hide', this.value !== '__ALTRO__');
+});
+$('vArr').addEventListener('change', function(){
+  $('vArrAltro').classList.toggle('hide', this.value !== '__ALTRO__');
+});
+
+$('btnLogin').addEventListener('click', function(){
+  AUTH = { email: $('loginEmail').value.trim(), pin: $('loginPin').value.trim() };
+  try { localStorage.setItem('auth_aliante', JSON.stringify(AUTH)); } catch(e){}
+  $('loginMsg').className = 'msg';
+  boot();
+});
+
+boot();
+</script>
+</body>
+</html>
