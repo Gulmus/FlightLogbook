@@ -12,6 +12,9 @@
  *   - Se il velivolo e' quello in comproprieta', subito dopo il salvataggio
  *     parte il travaso nel file di prenotazione (stessa logica del menu).
  *   - Pannello "recency" con i totali e il confronto con i minimi.
+ *   - Riquadro "Importa da WeGlide" (solo se c'e' anche WeGlideImport.gs): i
+ *     voli scaricati precompilano il modulo, che resta interamente modificabile
+ *     fino alla conferma.
  *
  * DISTRIBUZIONE
  *   Distribuisci > Nuova distribuzione > App web
@@ -112,7 +115,10 @@ function logLeggiVoli_() {
       funzione: lFunzione_(r[LC.FUNZ - 1]),   // vuoto -> LOG_CONFIG.FUNZIONE_DEFAULT
       note: String(r[LC.NOTE - 1]).trim(),
       sincronizzato: !!r[LC.SYNC - 1],
-      esito: String(r[LC.ESITO - 1]).trim()
+      esito: String(r[LC.ESITO - 1]).trim(),
+      // Vuoto per i voli inseriti a mano; per gli altri e' l'ID del volo su
+      // WeGlide, usato per non importare due volte lo stesso volo.
+      weglideId: String(r[LC.WG - 1] || '').trim()
     });
   });
 
@@ -249,6 +255,17 @@ function logBootstrap() {
     return a.marche < b.marche ? -1 : 1;
   });
 
+  // Il riquadro WeGlide compare solo se WeGlideImport.gs e' nel progetto e il
+  // Pilot ID e' stato impostato: senza il terzo file l'app resta identica a prima.
+  var weglide = { disponibile: false, configurato: false };
+  if (typeof wgStatoPerApp_ === 'function') {
+    try {
+      weglide = wgStatoPerApp_();
+    } catch (err) {
+      weglide = { disponibile: true, configurato: false, motivo: err.message };
+    }
+  }
+
   return {
     oggi: lOggi_(),
     icaoDefault: LOG_CONFIG.ICAO_DEFAULT,
@@ -258,7 +275,8 @@ function logBootstrap() {
     aeroporti: logListaIcao_(voli),
     recency: logRecency_(voli),
     ultimi: voli.slice(0, 12),
-    fileCondivisoConfigurato: String(LOG_CONFIG.ID_FILE_CONDIVISO || '').indexOf('INCOLLA') !== 0
+    fileCondivisoConfigurato: String(LOG_CONFIG.ID_FILE_CONDIVISO || '').indexOf('INCOLLA') !== 0,
+    weglide: weglide
   };
 }
 
@@ -266,7 +284,11 @@ function logBootstrap() {
  * Salva un volo nel logbook e, se il velivolo e' condiviso, lo travasa nel
  * file di prenotazione riusando la funzione del menu (che si occupa anche di
  * chiudere la prenotazione del giorno ed evitare i doppioni).
- * payload = { data, marche, dep, arr, oraDec, oraAtt, quota, funzione, note }
+ * payload = { data, marche, dep, arr, oraDec, oraAtt, quota, funzione, note,
+ *             weglideId }
+ * weglideId c'e' solo quando il modulo e' stato precompilato da WeGlide: resta
+ * scritto nel logbook e impedisce di importare due volte lo stesso volo, anche
+ * se nel frattempo ne hai corretto gli orari.
  */
 function logSalvaVolo(payload) {
   var data = lParseData_(payload.data);
@@ -296,6 +318,9 @@ function logSalvaVolo(payload) {
   var d = lDurata_(secDec, secAtt);
   var oraDec = lFormattaOra_(secDec);
 
+  // Solo cifre: se il client manda qualcosa di strano viene semplicemente ignorato.
+  var weglideId = String(payload.weglideId || '').replace(/[^0-9]/g, '');
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Operazione in corso, riprova.');
   try {
@@ -305,6 +330,12 @@ function logSalvaVolo(payload) {
       return x.data === data && String(x.oraDec).substring(0, 5) === oraDec;
     });
     if (duplicato) throw new Error('Un volo del ' + lItDate_(data) + ' con decollo alle ' + oraDec + ' e\' gia\' registrato.');
+
+    // Stesso volo WeGlide gia' importato, magari con orari corretti a mano:
+    // il controllo su data + ora non lo intercetterebbe.
+    if (weglideId && esistenti.some(function (x) { return x.weglideId === weglideId; })) {
+      throw new Error('Il volo WeGlide #' + weglideId + ' e\' gia\' nel logbook.');
+    }
 
     var riga = new Array(HEADER_LOG.length).fill('');
     riga[LC.DATA - 1] = data;
@@ -319,6 +350,7 @@ function logSalvaVolo(payload) {
     riga[LC.QUOTA - 1] = quota;
     riga[LC.NOTE - 1] = String(payload.note || '').substring(0, 500);
     riga[LC.FUNZ - 1] = lFunzione_(payload.funzione);   // PIC o DUAL, mai vuoto
+    riga[LC.WG - 1] = weglideId ? Number(weglideId) : '';
 
     lFoglio_(LOG_FOGLI.LOG).appendRow(riga);
     SpreadsheetApp.flush();

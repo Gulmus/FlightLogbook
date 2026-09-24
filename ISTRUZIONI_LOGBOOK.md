@@ -19,16 +19,20 @@ Nessuna condivisione aggiuntiva è necessaria: lo script gira con il tuo account
 
 ## Foglio `Velivoli`
 
-| Marche | Modello | Condiviso | Note |
-|---|---|---|---|
-| OE-5357 | DG300 | SI | aliante in comproprietà |
-| D-1234 | ASK 21 | NO | scuola, noleggio |
+| Marche | Modello | Condiviso | Note | Modello WeGlide |
+|---|---|---|---|---|
+| OE-5357 | DG300 | SI | aliante in comproprietà | DG300 WL |
+| D-1234 | ASK 21 | NO | scuola, noleggio | |
 
 La colonna `Condiviso` è l'interruttore che decide il travaso: solo `SI` fa scattare la copia nel file condiviso. Gli altri velivoli li aggiungi tu, anche in seguito. Le marche di questo foglio alimentano il menu a tendina nel logbook, che però accetta anche un valore digitato a mano per il mezzo occasionale.
 
+`Modello WeGlide` serve solo all'import descritto più sotto: è il nome esatto con cui WeGlide chiama quel modello, che spesso non coincide con il nostro (`DG300 WL` invece di `DG300`). Lasciandola vuota l'import prova comunque a indovinare dalle marche e dal modello; riempirla è il modo di non farsi più chiedere niente. Anche questa colonna è in coda al foglio, quindi su un `Velivoli` già compilato basta rieseguire `Logbook > Inizializza / verifica fogli` per vederla comparire.
+
 ## Foglio `Logbook`
 
-Compili a mano soltanto: `Data`, `Marche` (dal menu), `ICAO partenza`, `ICAO arrivo`, `Ora decollo`, `Ora atterraggio`, `Quota sgancio (m)`, `Funzione` e le eventuali `Note`. Vengono riempite dallo script `Modello`, `Durata (hh:mm)`, `Durata (minuti)`, `Sincronizzato il` ed `Esito sincronizzazione`.
+Compili a mano soltanto: `Data`, `Marche` (dal menu), `ICAO partenza`, `ICAO arrivo`, `Ora decollo`, `Ora atterraggio`, `Quota sgancio (m)`, `Funzione` e le eventuali `Note`. Vengono riempite dallo script `Modello`, `Durata (hh:mm)`, `Durata (minuti)`, `Sincronizzato il`, `Esito sincronizzazione` e `WeGlide ID`.
+
+`WeGlide ID` è l'identificativo del volo su WeGlide, scritto solo sulle righe arrivate da quella parte: è la chiave che impedisce di importare due volte lo stesso volo anche dopo che ne hai corretto gli orari. Non c'è motivo di scriverla a mano, e cancellarla significa solo che quel volo potrà essere riproposto dall'import.
 
 `Funzione` accetta `PIC` o `DUAL` da un menu a tendina e serve a distinguere i voli da pilota responsabile da quelli con istruttore. Se la lasci vuota il volo conta come `PIC`, valore governato da `LOG_CONFIG.FUNZIONE_DEFAULT`: per questo le righe scritte prima che la colonna esistesse restano valide senza ritoccarle. La colonna è stata aggiunta **in fondo** al foglio proprio per non far slittare quelle esistenti; se il tuo `Logbook` è già in uso basta rieseguire `Logbook > Inizializza / verifica fogli` per vederla comparire con il suo menu a tendina, e `Ricalcola modello e durate` per normalizzare le celle scritte in fretta (`p`, `d`, `doppio` diventano `PIC` e `DUAL`).
 
@@ -66,6 +70,28 @@ Al salvataggio la riga viene scritta nel foglio `Logbook` e, se il velivolo è q
 
 In basso l'elenco degli ultimi dodici voli, con l'etichetta `condiviso` sulle righe già copiate nel file dell'aliante, `da correggere` su quelle che la sincronizzazione ha scartato e `DUAL` sui voli con istruttore.
 
+## Import dei voli da WeGlide
+
+Se carichi le tracce su WeGlide, i dati del volo li hai già scritti una volta: questa parte li rilegge e precompila il modulo, senza salvare nulla da sola.
+
+Il meccanismo è a richiesta, non a inseguimento. WeGlide non può avvisare da sé: gli accessi OAuth, che sarebbero l'unico modo per farsi notificare, sono riservati alle applicazioni con almeno mille utenti, e la chiave personale ha un tetto di sessanta richieste al giorno. Un polling automatico brucerebbe quel budget per sapere, quasi sempre, che non c'è niente di nuovo. Quindi siamo noi a chiedere: un tocco per l'elenco, un tocco per il volo.
+
+**Installazione.** Nello stesso progetto aggiungi un quarto file, `+` > `Script` con nome **WeGlideImport**, e incolli **WeGlideImport.gs**. Salva e ricarica il foglio: nel menu `Logbook` compare il sottomenu `WeGlide`. La prima voce, `Imposta credenziali`, chiede due cose: il Pilot ID, cioè il numero che compare nell'URL del tuo profilo WeGlide, e la API key, che si genera in `Profile > Settings > Advanced > API Key` (massimo due chiavi per account). La chiave è facoltativa — i dati dei voli pubblici si leggono anche senza — ma con la chiave le richieste risultano attribuite a te. Entrambe finiscono nelle proprietà dello script, non nel codice: non le vedi nei file e non rischi di condividerle. Si rimuovono con `Cancella credenziali`. Al primo uso Google chiederà una nuova autorizzazione, perché ora lo script fa richieste verso l'esterno e può mandarti email. Verifica con `WeGlide > Prova collegamento`, che risponde con il Pilot ID, la presenza della chiave, quanti voli ha ricevuto e il dettaglio dell'ultimo.
+
+**Dalla web app.** Sopra il modulo compare il riquadro `Importa da WeGlide` con il pulsante `Cerca voli su WeGlide`: mostra i tuoi ultimi voli, con data, modello, campo di partenza, chilometri, durata e orari in UTC. I voli già nel logbook sono in grigio con l'etichetta `già in logbook`. Toccando un volo lo script scarica il dettaglio e riempie il modulo: data, velivolo, ICAO di partenza e di arrivo, ora di decollo e di atterraggio, e una nota del tipo `WeGlide #123456 · 187 km` che tiene la tracciabilità del volo anche fra dieci anni. **Tutto resta modificabile**: gli orari WeGlide sono quelli della traccia IGC e sono in UTC, quindi differiscono spesso di qualche minuto da quelli che l'ATC ti comunica all'atterraggio — sono un punto di partenza, non un dato ufficiale. Si corregge quello che serve e si conferma con `Registra volo`, lo stesso pulsante di sempre: il volo viene salvato nel logbook e, se il velivolo è l'aliante in comproprietà, copiato nel file condiviso come qualsiasi altro. Un riquadro giallo ricorda da quale volo WeGlide arrivano i dati e permette di annullare la precompilazione se cambi idea.
+
+Due cose WeGlide non le sa e restano tue: la **quota di sgancio**, che il dato disponibile non rappresenta (è un guadagno di quota ricavato dalla traccia, non la quota di sgancio), e la **funzione a bordo**, perché l'API non dice chi era ai comandi; sui biposto l'app te lo ricorda con un avviso, per il resto vale il `PIC` preselezionato.
+
+**Gli aeroporti.** WeGlide identifica i campi con un numero e un nome esteso, `Torino Aeritalia`, e non espone il codice ICAO da nessuna parte, nemmeno nel dettaglio dell'aeroporto: la corrispondenza la tiene il foglio `WeGlide aeroporti`, che nasce da solo. Al primo volo su un campo nuovo compare una riga con l'ID, il nome e la colonna `ICAO` vuota, e l'app ti avvisa di completarla: scrivi `LIMA` accanto a `Torino Aeritalia` e da lì in avanti quel campo è risolto senza più domande. Finché l'ICAO manca, il modulo lascia il valore già selezionato e lo segnala. Per gli atterraggi fuori campo, dove WeGlide non indica nulla, resta la convenzione `ZZZZ` del foglio `Aeroporti`.
+
+**Il conto delle richieste.** L'elenco costa una richiesta e vale per mezz'ora: aprire e richiudere il riquadro non consuma niente, e se vuoi forzare una rilettura c'è il link `Aggiorna elenco`. Ogni volo scelto costa una seconda richiesta, quella del dettaglio, che è ciò che serve per avere marche e campo di atterraggio. In pratica un volo importato costa due richieste su sessanta disponibili al giorno. Lo script si ferma da solo a quarantacinque, per non lasciarti a metà lavoro, e il conteggio è scritto sotto l'elenco. Il contatore si azzera col cambio di giorno.
+
+**Dal foglio, senza web app.** `WeGlide > Importa voli recenti` fa la stessa cosa in blocco: mostra l'elenco dei voli nuovi, chiede conferma e scrive le righe nel foglio `Logbook` lasciando vuota la colonna `Sincronizzato il` e scrivendo in `Esito` un promemoria (`da WeGlide: controlla orari (UTC) e funzione`). Niente arriva al file condiviso prima che tu abbia controllato gli orari e lanciato `Sincronizza voli condivisi`. Per prudenza importa al massimo otto voli per volta.
+
+**Avviso giornaliero, facoltativo.** `WeGlide > Attiva avviso giornaliero` installa un attivatore che ogni sera fa **una** richiesta e, se trova voli non ancora nel logbook, ti manda una mail con l'elenco e il link alla web app. Non scrive niente e non importa niente: serve solo a non dimenticarsene. È disattivato per default e si spegne dalla voce successiva.
+
+Un'ultima avvertenza: WeGlide dichiara la propria API "not finalized", quindi i nomi dei campi possono cambiare. Sono tutti raccolti nel blocco `WG_F` in cima a `WeGlideImport.gs`, così una eventuale rottura si aggiusta in un punto solo. E ovviamente l'import vede solo i voli che hai caricato su WeGlide: quelli senza traccia continui a scriverli a mano, come prima.
+
 ## Il pannello recency
 
 In cima all'app quattro riquadri, verdi o rossi rispetto ai minimi: ore totali, ore negli ultimi 24 mesi (minimo 5), voli negli ultimi 24 mesi (minimo 15) e voli negli ultimi 90 giorni (minimo 3, il requisito per il trasporto di passeggeri). Sotto ogni numero, se il requisito è soddisfatto, c'è la data fino alla quale regge: è il giorno in cui il volo che oggi lo sostiene esce dalla finestra temporale, cioè il primo giorno in cui scenderai sotto la soglia se non voli più. Se invece il requisito non è soddisfatto, leggi quanto manca — ore e minuti oppure numero di voli.
@@ -79,3 +105,5 @@ Resta un limite voluto: il pannello non conta i lanci, che nei requisiti compaio
 In cima a `LogbookPersonale.gs`: `CHIUDI_PRENOTAZIONE` (predefinito `true`) decide se il travaso segna anche la prenotazione come `CONCLUSA`; mettilo a `false` se preferisci chiudere il rendiconto a mano dall'app. `QUOTA_OBBLIGATORIA` (predefinito `false`) impedisce la sincronizzazione dei voli senza quota di sgancio, utile se vuoi essere sicuro di non dimenticarla. `FUNZIONE_DEFAULT` (predefinito `'PIC'`) è il valore attribuito alle celle `Funzione` lasciate vuote.
 
 In cima a `WebLogbook.gs`: il blocco `RECENCY` con le tre soglie, l'ampiezza della finestra breve e `SOLO_PIC`.
+
+In cima a `WeGlideImport.gs`, nel blocco `WG_CONFIG`: `VOLI_DA_LEGGERE` (25) è quanti voli chiedere nell'elenco, `GIORNI_INDIETRO` (180) quanto indietro nel tempo proporli, `CACHE_MINUTI` (30) per quanto tempo riusare l'elenco già scaricato, `MAX_RICHIESTE_GIORNO` (45) il tetto di sicurezza sulle sessanta richieste concesse da WeGlide, `MAX_IMPORT_PER_VOLTA` (8) quanti voli importare in blocco dal menu. `PILOT_ID` resta a `0` se lo imposti dal menu, come è consigliabile.

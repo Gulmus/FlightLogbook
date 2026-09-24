@@ -47,28 +47,34 @@ var LOG_CONFIG = {
 var LOG_FOGLI = { LOG: 'Logbook', VELIVOLI: 'Velivoli' };
 
 /**
- * "Funzione" e' in coda di proposito: aggiungendola in fondo, un foglio
- * "Logbook" gia' compilato non va toccato e le colonne esistenti non slittano.
- * Basta rieseguire "Inizializza / verifica fogli" per farla comparire.
+ * "Funzione" e "WeGlide ID" sono in coda di proposito: aggiungendole in fondo,
+ * un foglio "Logbook" gia' compilato non va toccato e le colonne esistenti non
+ * slittano. Basta rieseguire "Inizializza / verifica fogli" per farle comparire.
  */
 var HEADER_LOG = ['Data', 'Marche', 'Modello', 'ICAO partenza', 'ICAO arrivo',
                   'Ora decollo', 'Ora atterraggio', 'Durata (hh:mm)', 'Durata (minuti)',
                   'Quota sgancio (m)', 'Note', 'Sincronizzato il', 'Esito sincronizzazione',
-                  'Funzione'];
+                  'Funzione', 'WeGlide ID'];
 
 // Posizione delle colonne del foglio "Logbook" (1 = colonna A)
 var LC = { DATA:1, MARCHE:2, MODELLO:3, DEP:4, ARR:5, DEC:6, ATT:7,
-           DUR:8, MIN:9, QUOTA:10, NOTE:11, SYNC:12, ESITO:13, FUNZ:14 };
+           DUR:8, MIN:9, QUOTA:10, NOTE:11, SYNC:12, ESITO:13, FUNZ:14, WG:15 };
 
 // Valori ammessi nella colonna "Funzione".
 var FUNZIONI = ['PIC', 'DUAL'];
 
-var HEADER_VELIVOLI = ['Marche', 'Modello', 'Condiviso', 'Note'];
+/**
+ * "Modello WeGlide" serve solo all'import da WeGlide (WeGlideImport.gs): e' il
+ * nome esatto con cui WeGlide chiama il modello, che non coincide con il nostro
+ * ("DG300 WL" invece di "DG300"). Lasciata vuota, l'import prova comunque a
+ * indovinare dal modello.
+ */
+var HEADER_VELIVOLI = ['Marche', 'Modello', 'Condiviso', 'Note', 'Modello WeGlide'];
 
 // Velivolo precaricato: l'aliante in comproprieta'. Gli altri li aggiungi a mano.
 var VELIVOLI_INIZIALI = [
-  ['OE-5357', 'DG300', 'SI', 'aliante in comproprieta\''],
-  ['', '', 'NO', 'aggiungi qui i mezzi affittati']
+  ['OE-5357', 'DG300', 'SI', 'aliante in comproprieta\'', 'DG300 WL'],
+  ['', '', 'NO', 'aggiungi qui i mezzi affittati', '']
 ];
 
 /* ==================== STRUTTURA DEL FILE CONDIVISO ======================== */
@@ -89,8 +95,21 @@ var COND = {
 /* ================================= MENU ================================== */
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Logbook')
+  var ui = SpreadsheetApp.getUi();
+
+  // Sottomenu dell'import da WeGlide. Le funzioni stanno in WeGlideImport.gs:
+  // se quel file non e' stato aggiunto al progetto le voci danno errore, il
+  // resto del menu funziona comunque.
+  var weglide = ui.createMenu('WeGlide')
+    .addItem('Imposta credenziali', 'wgImpostaCredenziali')
+    .addItem('Prova collegamento', 'wgProvaCollegamento')
+    .addItem('Importa voli recenti', 'wgImportaVoli')
+    .addSeparator()
+    .addItem('Attiva avviso giornaliero', 'wgAttivaControlloGiornaliero')
+    .addItem('Disattiva avviso giornaliero', 'wgDisattivaControlloGiornaliero')
+    .addItem('Cancella credenziali', 'wgCancellaCredenziali');
+
+  ui.createMenu('Logbook')
     .addItem('Inizializza / verifica fogli', 'inizializzaLogbook')
     // Definita in WebLogbook.gs: se quel file non c'e' la voce da' errore.
     .addItem('Mostra URL web app', 'logMostraUrl')
@@ -99,6 +118,8 @@ function onOpen() {
     .addItem('Sincronizza voli condivisi', 'sincronizzaVoliCondivisi')
     .addItem('Importa voli dal file condiviso', 'importaDaFileCondiviso')
     .addItem('Riepilogo ore di volo', 'riepilogoOre')
+    .addSeparator()
+    .addSubMenu(weglide)
     .addSeparator()
     .addItem('Attiva sincronizzazione automatica', 'attivaSincronizzazioneAutomatica')
     .addItem('Disattiva sincronizzazione automatica', 'disattivaSincronizzazioneAutomatica')
@@ -184,20 +205,36 @@ function lFoglio_(nome) {
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nome);
   if (!sh) throw new Error('Foglio "' + nome + '" mancante: esegui Logbook > Inizializza fogli.');
   if (nome === LOG_FOGLI.LOG) assicuraColonneLog_(sh);
+  if (nome === LOG_FOGLI.VELIVOLI) assicuraColonneVelivoli_(sh);
   return sh;
 }
 
 /**
- * Compatibilita' con i fogli creati prima della colonna "Funzione": allarga il
- * foglio se necessario e scrive l'intestazione mancante. Cosi' tutte le
- * funzioni possono leggere HEADER_LOG.length colonne senza errori.
+ * Compatibilita' con i fogli creati prima delle colonne aggiunte in coda
+ * ("Funzione", "WeGlide ID"): allarga il foglio se necessario e scrive le
+ * intestazioni mancanti. Cosi' tutte le funzioni possono leggere
+ * HEADER_LOG.length colonne senza errori. Le colonne gia' presenti con
+ * l'intestazione giusta non vengono toccate.
  */
 function assicuraColonneLog_(sh) {
   if (sh.getMaxColumns() < HEADER_LOG.length) {
     sh.insertColumnsAfter(sh.getMaxColumns(), HEADER_LOG.length - sh.getMaxColumns());
   }
-  if (String(sh.getRange(1, LC.FUNZ).getValue()).trim() !== HEADER_LOG[LC.FUNZ - 1]) {
-    sh.getRange(1, LC.FUNZ).setValue(HEADER_LOG[LC.FUNZ - 1]).setFontWeight('bold');
+  [LC.FUNZ, LC.WG].forEach(function (c) {
+    if (String(sh.getRange(1, c).getValue()).trim() !== HEADER_LOG[c - 1]) {
+      sh.getRange(1, c).setValue(HEADER_LOG[c - 1]).setFontWeight('bold');
+    }
+  });
+}
+
+/** Stessa cosa per "Velivoli", dove in coda e' comparsa "Modello WeGlide". */
+function assicuraColonneVelivoli_(sh) {
+  if (sh.getMaxColumns() < HEADER_VELIVOLI.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), HEADER_VELIVOLI.length - sh.getMaxColumns());
+  }
+  var ultima = HEADER_VELIVOLI.length;
+  if (String(sh.getRange(1, ultima).getValue()).trim() !== HEADER_VELIVOLI[ultima - 1]) {
+    sh.getRange(1, ultima).setValue(HEADER_VELIVOLI[ultima - 1]).setFontWeight('bold');
   }
 }
 
@@ -216,6 +253,9 @@ function inizializzaLogbook() {
     vel.appendRow(HEADER_VELIVOLI);
     vel.getRange(2, 1, VELIVOLI_INIZIALI.length, HEADER_VELIVOLI.length).setValues(VELIVOLI_INIZIALI);
   } else {
+    // Un foglio nato prima di "Modello WeGlide" ha meno colonne: si allarga
+    // invece di far fallire la scrittura delle intestazioni.
+    assicuraColonneVelivoli_(vel);
     vel.getRange(1, 1, 1, HEADER_VELIVOLI.length).setValues([HEADER_VELIVOLI]);
   }
   vel.setFrozenRows(1);
@@ -240,6 +280,9 @@ function inizializzaLogbook() {
   log.getRange(2, LC.DEC, righe, 3).setNumberFormat('@');   // decollo, atterraggio, hh:mm
   log.getRange(2, LC.MIN, righe, 1).setNumberFormat('0');
   log.getRange(2, LC.QUOTA, righe, 1).setNumberFormat('0');
+  // Identificativo del volo su WeGlide: numero intero, senza separatore delle
+  // migliaia. Lo scrive l'import, si legge solo per riconoscere i doppioni.
+  log.getRange(2, LC.WG, righe, 1).setNumberFormat('0');
 
   // Menu a tendina sulle marche, alimentato dal foglio "Velivoli".
   var regola = SpreadsheetApp.newDataValidation()
@@ -258,17 +301,22 @@ function inizializzaLogbook() {
     .build();
   log.getRange(2, LC.FUNZ, righe, 1).setDataValidation(regolaFunz);
 
+  // Foglio di conversione degli aeroporti WeGlide, se l'import e' installato.
+  if (typeof wgFoglioAeroporti_ === 'function') wgFoglioAeroporti_();
+
   lAvvisa_('Fogli pronti.\n\n' +
     '1) Completa "Velivoli" con gli altri mezzi (colonna Condiviso = NO).\n' +
     '2) Incolla in LOG_CONFIG.ID_FILE_CONDIVISO l\'ID del file di prenotazione.\n' +
     '3) Prova con Logbook > Prova collegamento al file condiviso.\n\n' +
     'La colonna "Funzione" accetta PIC o DUAL: se la lasci vuota il volo conta ' +
-    'come ' + LOG_CONFIG.FUNZIONE_DEFAULT + '.');
+    'come ' + LOG_CONFIG.FUNZIONE_DEFAULT + '.\n' +
+    'Le colonne "WeGlide ID" del logbook e "Modello WeGlide" dei velivoli le ' +
+    'usa l\'import da WeGlide: non serve scriverci nulla a mano.');
 }
 
 /* ============================== ANAGRAFICA =============================== */
 
-/** Legge il foglio "Velivoli": marche -> {modello, condiviso}. */
+/** Legge il foglio "Velivoli": marche -> {modello, condiviso, modelloWeglide}. */
 function leggiVelivoli_() {
   var sh = lFoglio_(LOG_FOGLI.VELIVOLI);
   var out = {};
@@ -280,7 +328,9 @@ function leggiVelivoli_() {
     out[marche] = {
       marche: marche,
       modello: String(r[1]).trim(),
-      condiviso: (flag === 'SI' || flag === 'SÌ' || flag === 'X' || flag === 'TRUE' || flag === 'VERO')
+      condiviso: (flag === 'SI' || flag === 'SÌ' || flag === 'X' || flag === 'TRUE' || flag === 'VERO'),
+      // Usato solo dall'import da WeGlide per riconoscere il mezzo.
+      modelloWeglide: String(r[4] || '').trim()
     };
   });
   return out;

@@ -64,7 +64,8 @@
   .durata.errore{background:#fef2f2; color:var(--rosso)}
 
   /* --- messaggi --- */
-  .msg{padding:11px; border-radius:9px; font-size:14px; margin-bottom:12px}
+  /* pre-line: gli avvisi a più righe (per esempio quelli di WeGlide) restano leggibili */
+  .msg{padding:11px; border-radius:9px; font-size:14px; margin-bottom:12px; white-space:pre-line}
   .msg.ok{background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0}
   .msg.err{background:#fef2f2; color:#991b1b; border:1px solid #fecaca}
   .msg.att{background:#fffbeb; color:#92400e; border:1px solid #fde68a}
@@ -81,6 +82,14 @@
   .tag.dual{background:#fef3c7; color:#92400e}
   .nota{font-size:12px; color:var(--grigio); margin-top:10px; line-height:1.45}
   .caricamento{text-align:center; color:var(--grigio); padding:30px 0}
+
+  /* --- riquadro WeGlide: le righe dell'elenco si toccano come pulsanti --- */
+  .wgvolo{cursor:pointer}
+  .wgvolo:active{background:#f9fafb}
+  .wgvolo.fatto{opacity:.5}
+  button.link{width:auto; padding:0; margin:0; background:none; color:var(--blu);
+              font-weight:600; font-size:13px; text-decoration:underline}
+  .attesa{opacity:.5; pointer-events:none}
 </style>
 </head>
 <body>
@@ -99,9 +108,33 @@
     <div class="nota" id="notaRecency"></div>
   </div>
 
+  <!-- =========================== DA WEGLIDE ========================== -->
+  <!-- Nascosto se WeGlideImport.gs non è nel progetto o il Pilot ID manca. -->
+  <div class="card nascosto" id="cardWg">
+    <h2>Importa da WeGlide</h2>
+    <div class="nota" id="wgNota">
+      I voli caricati su WeGlide si scelgono qui e il modulo sotto si precompila.
+      Gli orari sono quelli della traccia IGC, in UTC: quasi sempre differiscono
+      di qualche minuto da quelli comunicati dall’ATC, quindi vanno ricontrollati
+      prima di confermare. Niente viene salvato senza la tua conferma.
+    </div>
+    <button id="wgCerca">Cerca voli su WeGlide</button>
+    <div id="wgElenco"></div>
+    <div class="nota">
+      <span id="wgBudget"></span>
+      <button type="button" id="wgAggiorna" class="link nascosto">Aggiorna elenco</button>
+    </div>
+  </div>
+
   <!-- ========================== NUOVO VOLO =========================== -->
-  <div class="card">
+  <div class="card" id="cardVolo">
     <h2>Nuovo volo</h2>
+
+    <!-- Compare solo quando il modulo arriva da WeGlide. -->
+    <div class="msg att nascosto" id="wgBanner">
+      <span id="wgBannerTesto"></span>
+      <button type="button" id="wgStacca" class="link">Annulla precompilazione</button>
+    </div>
 
     <label for="data">Data del volo</label>
     <input type="date" id="data">
@@ -195,6 +228,12 @@ function hhmm(min){
   min = Math.round(min||0);
   return Math.floor(min/60)+':'+('0'+(min%60)).slice(-2);
 }
+/* I nomi che arrivano da WeGlide finiscono dentro innerHTML: vanno resi inerti. */
+function esc(s){
+  return String(s===null||s===undefined?'':s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
 
 /* ====================================================================
    RECENCY: quattro riquadri. Il colore dice se la soglia è raggiunta,
@@ -281,6 +320,128 @@ function valoreCampo(idSelect, idAltro){
 }
 
 /* ====================================================================
+   WEGLIDE: elenco dei voli e precompilazione del modulo.
+   Nessuna scrittura: il volo si salva solo con "Registra volo", dopo aver
+   ricontrollato gli orari (quelli WeGlide sono UTC, presi dalla traccia,
+   e differiscono spesso di qualche minuto da quelli dell'ATC).
+   ==================================================================== */
+var WG_DATI = null;   // ultimo elenco ricevuto
+var WG_ID   = '';     // ID del volo WeGlide che sta precompilando il modulo
+
+/** Imposta una tendina sul valore dato, ripiegando su "Altro…" se non c'è. */
+function impostaSelectOAltro(idSelect, idAltro, valore){
+  var sel = document.getElementById(idSelect);
+  var altro = document.getElementById(idAltro);
+  var presente = Array.prototype.some.call(sel.options, function(o){ return o.value===valore; });
+  if(presente){
+    sel.value = valore;
+    altro.classList.add('nascosto');
+    altro.value = '';
+  }else{
+    sel.value = '__ALTRO__';
+    altro.classList.remove('nascosto');
+    altro.value = valore;
+  }
+}
+
+function wgAggiornaBudget(b, daCache){
+  if(!b) return;
+  document.getElementById('wgBudget').textContent =
+    'Richieste a WeGlide usate oggi: '+b.usate+' di '+b.massimo+
+    (daCache ? ' · elenco dalla copia locale' : '')+'. ';
+}
+
+function wgDisegnaElenco(dati){
+  WG_DATI = dati;
+  var box = document.getElementById('wgElenco');
+
+  if(!dati.voli.length){
+    box.innerHTML = '<div class="nota">Nessun volo su WeGlide negli ultimi '+dati.giorni+' giorni.</div>';
+  }else{
+    box.innerHTML = dati.voli.map(function(v){
+      return '<div class="volo wgvolo'+(v.giaImportato?' fatto':'')+'" data-id="'+esc(v.id)+'">'+
+               '<div class="sx"><strong>'+itDate(v.data)+'</strong>'+
+                 (v.giaImportato?'<span class="tag">già in logbook</span>':'')+
+                 '<div>'+esc(v.modello||'modello ignoto')+
+                 (v.aeroporto?' · '+esc(v.aeroporto):'')+
+                 (v.km?' · '+esc(v.km)+' km':'')+'</div>'+
+               '</div>'+
+               '<div class="dx"><div class="ore">'+esc(v.durata)+'</div>'+
+                 '<div style="font-size:12px;color:#6b7280">'+esc(v.oraDec)+'–'+esc(v.oraAtt)+' UTC</div>'+
+               '</div>'+
+             '</div>';
+    }).join('');
+
+    Array.prototype.forEach.call(box.querySelectorAll('.wgvolo'), function(el){
+      el.addEventListener('click', function(){ wgScegli(el.getAttribute('data-id')); });
+    });
+  }
+
+  wgAggiornaBudget(dati.budget, dati.daCache);
+  document.getElementById('wgAggiorna').classList.remove('nascosto');
+}
+
+/** Scarica l'elenco. forza = true ignora la copia in cache (costa 1 richiesta). */
+async function wgCercaVoli(forza){
+  var b = document.getElementById('wgCerca');
+  var testoOriginale = b.textContent;
+  b.disabled = true;
+  b.textContent = 'Lettura da WeGlide…';
+  avvisa('');
+  try{
+    wgDisegnaElenco(await srv('wgVoliDaScegliere', !!forza));
+  }catch(err){
+    avvisa(err.message || 'WeGlide non ha risposto.', 'err');
+  }finally{
+    b.disabled = false;
+    b.textContent = testoOriginale;
+  }
+}
+
+/** Un volo scelto: scarica il dettaglio e versa i dati nel modulo. */
+async function wgScegli(id){
+  var elenco = document.getElementById('wgElenco');
+  elenco.classList.add('attesa');
+  avvisa('');
+  try{
+    var p = await srv('wgPreparaVolo', id);
+
+    document.getElementById('data').value = p.data || '';
+    if(p.marche) impostaSelectOAltro('velivolo','velivoloAltro', p.marche);
+    if(p.dep)    impostaSelectOAltro('dep','depAltro', p.dep);
+    if(p.arr)    impostaSelectOAltro('arr','arrAltro', p.arr);
+    document.getElementById('dec').value = p.oraDec || '';
+    document.getElementById('att').value = p.oraAtt || '';
+    // La nota proposta non sovrascrive quello che hai già scritto.
+    var note = document.getElementById('note');
+    if(!note.value.trim()) note.value = p.note || '';
+    aggiornaDurata();
+    wgAggiornaBudget(p.budget, false);
+
+    WG_ID = String(p.weglideId);
+    document.getElementById('wgBannerTesto').textContent =
+      'Precompilato da WeGlide #'+p.weglideId+' · orari UTC dalla traccia IGC ('+
+      p.durata+') · correggili se l’ATC te ne ha dati altri, poi conferma. ';
+    document.getElementById('wgBanner').classList.remove('nascosto');
+
+    // La quota di sgancio WeGlide non la sa: resta da scrivere a mano, come prima.
+    if(p.avvisi && p.avvisi.length) avvisa(p.avvisi.join('\n'), 'att');
+
+    document.getElementById('cardVolo').scrollIntoView({behavior:'smooth', block:'start'});
+  }catch(err){
+    avvisa(err.message || 'Dettaglio del volo non disponibile.', 'err');
+  }finally{
+    elenco.classList.remove('attesa');
+  }
+}
+
+/** Torna a un inserimento manuale: il volo non sarà legato a WeGlide. */
+function wgScollega(){
+  WG_ID = '';
+  document.getElementById('wgBanner').classList.add('nascosto');
+}
+
+/* ====================================================================
    Durata calcolata mentre si digita (il server la ricalcola comunque:
    questo serve solo a farsi accorgere subito degli orari invertiti).
    ==================================================================== */
@@ -353,6 +514,20 @@ function applica(stato, primaVolta){
     // Funzione a bordo preselezionata (LOG_CONFIG.FUNZIONE_DEFAULT).
     impostaFunzione(stato.funzioneDefault);
 
+    // Riquadro WeGlide: c'è solo se il terzo file di script è installato.
+    var w = stato.weglide || {};
+    if(w.disponibile){
+      document.getElementById('cardWg').classList.remove('nascosto');
+      if(w.configurato){
+        wgAggiornaBudget(w.budget, false);
+      }else{
+        document.getElementById('wgCerca').classList.add('nascosto');
+        document.getElementById('wgNota').textContent =
+          'Per leggere i voli da WeGlide serve il Pilot ID: dal foglio, menu '+
+          'Logbook > WeGlide > Imposta credenziali.'+(w.motivo ? ' ('+w.motivo+')' : '');
+      }
+    }
+
     if(!stato.fileCondivisoConfigurato){
       avvisa('Manca l’ID del file condiviso in LOG_CONFIG: i voli sull’aliante in '+
              'comproprietà verranno salvati qui ma non copiati nel file di prenotazione.','att');
@@ -372,7 +547,10 @@ async function salva(){
     oraAtt: document.getElementById('att').value,
     quota:  document.getElementById('quota').value,
     funzione: funzioneScelta(),
-    note:   document.getElementById('note').value
+    note:   document.getElementById('note').value,
+    // Presente solo se il modulo è stato precompilato da WeGlide: resta scritto
+    // nel logbook e impedisce di importare due volte lo stesso volo.
+    weglideId: WG_ID
   };
 
   // Controlli minimi lato client: il server li ripete comunque tutti.
@@ -384,12 +562,22 @@ async function salva(){
   bottone.textContent = 'Salvataggio…';
   avvisa('');
   try{
+    var idSalvato = WG_ID;
     var stato = await srv('logSalvaVolo', payload);
     applica(stato, false);
     avvisa(stato.messaggio, /ATTENZIONE/.test(stato.messaggio) ? 'att' : 'ok');
     // Si svuota solo ciò che cambia da volo a volo: data e velivolo restano.
     ['dec','att','quota','note'].forEach(function(id){ document.getElementById(id).value=''; });
     aggiornaDurata();
+    wgScollega();
+    // L'elenco WeGlide già a schermo marca subito il volo come importato, senza
+    // spendere un'altra richiesta.
+    if(idSalvato && WG_DATI){
+      WG_DATI.voli.forEach(function(v){
+        if(String(v.id)===String(idSalvato)) v.giaImportato = true;
+      });
+      wgDisegnaElenco(WG_DATI);
+    }
   }catch(err){
     avvisa(err.message || 'Errore imprevisto.','err');
   }finally{
@@ -409,6 +597,11 @@ async function salva(){
     document.getElementById('dec').addEventListener('input', aggiornaDurata);
     document.getElementById('att').addEventListener('input', aggiornaDurata);
     document.getElementById('salva').addEventListener('click', salva);
+
+    // WeGlide: ricerca dei voli, aggiornamento forzato, annullo precompilazione.
+    document.getElementById('wgCerca').addEventListener('click', function(){ wgCercaVoli(false); });
+    document.getElementById('wgAggiorna').addEventListener('click', function(){ wgCercaVoli(true); });
+    document.getElementById('wgStacca').addEventListener('click', wgScollega);
 
     // PIC / DUAL: il pulsante toccato diventa l'unico attivo.
     Array.prototype.forEach.call(document.querySelectorAll('#funzione .seg'), function(b){
