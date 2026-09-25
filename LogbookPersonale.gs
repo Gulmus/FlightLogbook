@@ -25,7 +25,7 @@ var LOG_CONFIG = {
    * ID del file di prenotazione dell'aliante condiviso. Si legge nell'URL:
    * https://docs.google.com/spreadsheets/d/  QUESTO_PEZZO  /edit
    */
-  ID_FILE_CONDIVISO: 'INCOLLA_QUI_L_ID_DEL_FILE_CONDIVISO',
+  ID_FILE_CONDIVISO: '1FUBPEEFgMBsbnEcz4P6sQuRa5ov-TGd4dRavtNcvHQY',
 
   MIA_EMAIL: '',              // vuoto = l'account con cui esegui lo script
   MIO_NOME: '',               // usato solo se non ti trova nel foglio "Utenti" condiviso
