@@ -68,7 +68,7 @@ var CONFIG = {
    * Esempio valido (repository GitHub pubblico):
    *   'https://raw.githubusercontent.com/utente/repo/main/icona.png'
    */
-  ICONA_URL: ''
+  ICONA_URL: 'https://raw.githubusercontent.com/Gulmus/FlightLogbook/main/OE-5357/88_512.png'
 };
 
 /**
