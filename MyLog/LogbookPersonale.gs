@@ -71,6 +71,19 @@ var LOG_CONFIG = {
    * conteggiate come PIC, senza bisogno di riempirle a mano.
    */
   FUNZIONE_DEFAULT: 'PIC'     // 'PIC' (pilota responsabile) oppure 'DUAL'
+   /**
+   * URL pubblico di un PNG quadrato (consigliato 192x192 o 512x512) usato come
+   * icona della pagina e, di norma, anche dalla scorciatoia sulla schermata
+   * Home di Android. Lascia stringa vuota per non impostarla.
+   *
+   * ATTENZIONE: setFaviconUrl() controlla l'ESTENSIONE nell'URL. Sono accettati
+   * indirizzi che terminano con .png .ico .gif .jpg; sono rifiutati con
+   * "tipo di immagine non supportato" i link di Drive e di
+   * lh3.googleusercontent.com, che non hanno estensione, e i formati .svg/.webp.
+   * Esempio valido (repository GitHub pubblico):
+   *   'https://raw.githubusercontent.com/utente/repo/main/icona.png'
+   */
+  ICONA_URL: 'https://raw.githubusercontent.com/Gulmus/FlightLogbook/main/MyLog/dani_logbook_512.png'
 };
 
 /* ====================== STRUTTURA DEL FILE PERSONALE ====================== */
