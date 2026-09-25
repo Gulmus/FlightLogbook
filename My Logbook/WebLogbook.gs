@@ -16,6 +16,12 @@
  *     voli scaricati precompilano il modulo, che resta interamente modificabile
  *     fino alla conferma.
  *
+ * ORARI
+ *   Decollo e atterraggio si inseriscono in UTC, come nel foglio e come nella
+ *   traccia IGC. Il modulo mostra sotto i campi l'ora locale corrispondente,
+ *   calcolata sulla data del volo, solo come aiuto alla lettura: nessuna
+ *   conversione viene applicata a cio' che finisce nel foglio.
+ *
  * DISTRIBUZIONE
  *   Distribuisci > Nuova distribuzione > App web
  *     Esegui come: Me
@@ -269,6 +275,10 @@ function logBootstrap() {
   return {
     oggi: lOggi_(),
     icaoDefault: LOG_CONFIG.ICAO_DEFAULT,
+    // Dicono al modulo come etichettare gli orari e su quale fuso calcolare
+    // l'ora locale mostrata come promemoria sotto i campi.
+    orariUtc: LOG_CONFIG.ORARI_UTC,
+    fusoLocale: LOG_CONFIG.TZ,
     funzioni: FUNZIONI,                              // ['PIC','DUAL']
     funzioneDefault: lFunzione_(''),                 // preselezionata nel modulo
     velivoli: elencoVelivoli,
@@ -286,6 +296,8 @@ function logBootstrap() {
  * chiudere la prenotazione del giorno ed evitare i doppioni).
  * payload = { data, marche, dep, arr, oraDec, oraAtt, quota, funzione, note,
  *             weglideId }
+ * oraDec e oraAtt arrivano gia' in UTC: il modulo non converte niente, si limita
+ * a mostrare accanto l'ora locale corrispondente.
  * weglideId c'e' solo quando il modulo e' stato precompilato da WeGlide: resta
  * scritto nel logbook e impedisce di importare due volte lo stesso volo, anche
  * se nel frattempo ne hai corretto gli orari.
@@ -324,12 +336,17 @@ function logSalvaVolo(payload) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Operazione in corso, riprova.');
   try {
-    // Doppio invio o volo gia' presente: si blocca qui.
+    // Doppio invio o volo gia' presente: si blocca qui. Il confronto tollera
+    // qualche minuto di differenza sul decollo (lStessoVolo_), perche' lo stesso
+    // volo puo' essere stato scritto con l'orario IGC invece di quello ATC.
     var esistenti = logLeggiVoli_();
     var duplicato = esistenti.some(function (x) {
-      return x.data === data && String(x.oraDec).substring(0, 5) === oraDec;
+      return lStessoVolo_(data, secDec, x.data, lParseOra_(x.oraDec));
     });
-    if (duplicato) throw new Error('Un volo del ' + lItDate_(data) + ' con decollo alle ' + oraDec + ' e\' gia\' registrato.');
+    if (duplicato) {
+      throw new Error('Un volo del ' + lItDate_(data) + ' con decollo intorno alle ' +
+        oraDec + lUtc_() + ' e\' gia\' registrato.');
+    }
 
     // Stesso volo WeGlide gia' importato, magari con orari corretti a mano:
     // il controllo su data + ora non lo intercetterebbe.

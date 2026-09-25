@@ -16,6 +16,12 @@
  *   "Voli" del file di prenotazione e la prenotazione di quel giorno viene
  *   chiusa (stato CONCLUSA), cosi' l'app non ti chiede piu' il rendiconto.
  *   Il dato lo inserisci una volta sola, qui.
+ *
+ * ORARI
+ *   Decollo e atterraggio sono in UTC (ora zulu), come nelle tracce IGC, nei
+ *   fonogrammi ATC e nel foglio "Voli" del file condiviso. E' una convenzione,
+ *   non una conversione: nessuna funzione tocca gli orari che scrivi. Il fuso
+ *   LOG_CONFIG.TZ serve solo a sapere che giorno e' oggi.
  ******************************************************************************/
 
 /* ============================ CONFIGURAZIONE ============================== */
@@ -25,11 +31,36 @@ var LOG_CONFIG = {
    * ID del file di prenotazione dell'aliante condiviso. Si legge nell'URL:
    * https://docs.google.com/spreadsheets/d/  QUESTO_PEZZO  /edit
    */
-  ID_FILE_CONDIVISO: '1FUBPEEFgMBsbnEcz4P6sQuRa5ov-TGd4dRavtNcvHQY',
+  ID_FILE_CONDIVISO: 'INCOLLA_QUI_L_ID_DEL_FILE_CONDIVISO',
 
   MIA_EMAIL: '',              // vuoto = l'account con cui esegui lo script
   MIO_NOME: '',               // usato solo se non ti trova nel foglio "Utenti" condiviso
+
+  /**
+   * Fuso usato SOLO per sapere che giorno e' oggi: data predefinita nel modulo,
+   * finestre della recency, rifiuto delle date future. Gli orari dei voli non lo
+   * usano mai (vedi ORARI_UTC).
+   */
   TZ: 'Europe/Rome',
+
+  /**
+   * Convenzione oraria: "Ora decollo" e "Ora atterraggio" sono in UTC (ora
+   * zulu), come nelle tracce IGC e nei fonogrammi ATC. Non e' una conversione:
+   * quello che scrivi e' quello che viene salvato. Messo a false toglie solo la
+   * dicitura "UTC" dalle interfacce e dai messaggi.
+   */
+  ORARI_UTC: true,
+
+  /**
+   * Tolleranza in minuti dei confronti fra voli (doppioni, travaso nel file
+   * condiviso, import da WeGlide). Lo stesso volo puo' avere orari diversi di
+   * qualche minuto secondo la fonte: la traccia IGC parte dal primo punto
+   * valido, l'ATC arrotonda. Due decolli dello stesso pilota a meno di questi
+   * minuti l'uno dall'altro non possono esistere, quindi la tolleranza non
+   * nasconde voli veri. Mettendo 0 il confronto torna a essere esatto.
+   */
+  TOLLERANZA_CONFRONTO_MIN: 10,
+
   ICAO_DEFAULT: 'LIMA',       // proposto quando lasci vuoto partenza o arrivo
   CHIUDI_PRENOTAZIONE: true,  // segna come CONCLUSA la prenotazione del giorno
   QUOTA_OBBLIGATORIA: false,  // true = senza quota di sgancio il volo non si sincronizza
@@ -184,6 +215,31 @@ function lDurata_(secDec, secAtt) {
   return { minuti: minuti, hhmm: lPad2_(Math.floor(minuti / 60)) + ':' + lPad2_(minuti % 60) };
 }
 
+/* ========================= CONVENZIONE ORARIA ============================= */
+
+/** ' UTC' da attaccare a un orario nei messaggi, o '' se la convenzione cambia. */
+function lUtc_() { return LOG_CONFIG.ORARI_UTC ? ' UTC' : ''; }
+
+/**
+ * Stesso volo? Unico punto in cui si decide, usato dal controllo dei doppioni
+ * della web app, dal travaso nel file condiviso, dall'import in senso opposto e
+ * dall'import da WeGlide.
+ *
+ * Il confronto e' su data e ora di DECOLLO, con la tolleranza di
+ * LOG_CONFIG.TOLLERANZA_CONFRONTO_MIN: tutti gli orari sono in UTC, ma la stessa
+ * ora arriva da fonti diverse (traccia IGC, fonogramma ATC, dito sul telefono) e
+ * puo' differire di qualche minuto. L'atterraggio non entra nel confronto: se il
+ * decollo coincide, il volo e' quello.
+ *
+ * secA/secB = secondi dalla mezzanotte (null = orario illeggibile: mai uguale).
+ */
+function lStessoVolo_(dataA, secA, dataB, secB) {
+  if (!dataA || !dataB || dataA !== dataB) return false;
+  if (secA === null || secA === undefined || secB === null || secB === undefined) return false;
+  var scarto = Math.abs(Math.round((secA - secB) / 60));
+  return scarto <= (Number(LOG_CONFIG.TOLLERANZA_CONFRONTO_MIN) || 0);
+}
+
 /**
  * Normalizza la funzione a bordo: accetta 'pic', 'p', 'PIC', 'dual', 'd',
  * 'doppio', 'istruzione' e simili. Vuoto -> valore predefinito, cosi' le righe
@@ -284,6 +340,15 @@ function inizializzaLogbook() {
   // migliaia. Lo scrive l'import, si legge solo per riconoscere i doppioni.
   log.getRange(2, LC.WG, righe, 1).setNumberFormat('0');
 
+  // Convenzione oraria scritta anche nel foglio: la nota compare sfiorando
+  // l'intestazione, cosi' non la si ricorda a memoria (ne' la si sbaglia).
+  var notaOre = LOG_CONFIG.ORARI_UTC
+    ? 'Orario in UTC (ora zulu), come nella traccia IGC e nel fonogramma ATC.\n' +
+      'Non in ora locale: d\'estate due ore in meno, d\'inverno una.'
+    : 'Orario in ora locale (' + LOG_CONFIG.TZ + ').';
+  log.getRange(1, LC.DEC).setNote(notaOre);
+  log.getRange(1, LC.ATT).setNote(notaOre);
+
   // Menu a tendina sulle marche, alimentato dal foglio "Velivoli".
   var regola = SpreadsheetApp.newDataValidation()
     .requireValueInRange(vel.getRange('A2:A200'), true)
@@ -308,6 +373,10 @@ function inizializzaLogbook() {
     '1) Completa "Velivoli" con gli altri mezzi (colonna Condiviso = NO).\n' +
     '2) Incolla in LOG_CONFIG.ID_FILE_CONDIVISO l\'ID del file di prenotazione.\n' +
     '3) Prova con Logbook > Prova collegamento al file condiviso.\n\n' +
+    (LOG_CONFIG.ORARI_UTC
+      ? 'Gli orari di decollo e atterraggio si scrivono in UTC, qui e nella web ' +
+        'app, come nella traccia IGC e nel fonogramma ATC.\n'
+      : '') +
     'La colonna "Funzione" accetta PIC o DUAL: se la lasci vuota il volo conta ' +
     'come ' + LOG_CONFIG.FUNZIONE_DEFAULT + '.\n' +
     'Le colonne "WeGlide ID" del logbook e "Modello WeGlide" dei velivoli le ' +
@@ -449,8 +518,10 @@ function provaCollegamento() {
 /**
  * Copia nel file condiviso i voli sull'aliante in comproprieta' non ancora
  * sincronizzati, e chiude la prenotazione corrispondente.
- * Rilanciabile a piacere: le righe con "Sincronizzato il" pieno sono ignorate,
- * e in ogni caso un doppione sullo stesso giorno/ora/pilota viene riconosciuto.
+ * Rilanciabile a piacere: le righe con "Sincronizzato il" pieno sono ignorate, e
+ * in ogni caso un volo dello stesso pilota nello stesso giorno con un decollo
+ * quasi uguale (vedi lStessoVolo_) viene riconosciuto come doppione.
+ * Gli orari passano cosi' come sono: UTC nel logbook, UTC nel file condiviso.
  */
 function sincronizzaVoliCondivisi() {
   var log = lFoglio_(LOG_FOGLI.LOG);
@@ -483,13 +554,17 @@ function sincronizzaVoliCondivisi() {
     });
   }
 
-  // Voli condivisi gia' presenti: chiave data|ora decollo|email.
-  var esistenti = {};
+  // Voli condivisi gia' presenti. Non una chiave esatta ma un elenco, perche' il
+  // confronto sull'orario ha la tolleranza di lStessoVolo_: gli orari sono in UTC
+  // in entrambi i file, ma la stessa ora puo' arrivare dall'IGC o dall'ATC.
+  var esistenti = [];
   if (shVoli.getLastRow() > 1) {
     shVoli.getRange(2, 1, shVoli.getLastRow() - 1, shVoli.getLastColumn()).getValues().forEach(function (r) {
-      esistenti[lParseData_(r[h.map['Data volo']]) + '|' +
-                String(r[h.map['Ora decollo']]).trim().substring(0, 5) + '|' +
-                String(r[h.map['Email']]).trim().toLowerCase()] = true;
+      esistenti.push({
+        data: lParseData_(r[h.map['Data volo']]),
+        sec: lParseOra_(r[h.map['Ora decollo']]),
+        email: String(r[h.map['Email']]).trim().toLowerCase()
+      });
     });
   }
 
@@ -540,13 +615,17 @@ function sincronizzaVoliCondivisi() {
     if (errore) { aggiornamentiLog.push(['', 'DA CORREGGERE: ' + errore]); errori++; return; }
 
     var oraDec = lFormattaOra_(secDec);
-    var chiave = data + '|' + oraDec + '|' + io;
-    if (esistenti[chiave]) {
+
+    // Doppione: stesso pilota, stesso giorno, decollo entro la tolleranza.
+    var gia = esistenti.some(function (x) {
+      return x.email === io && lStessoVolo_(data, secDec, x.data, x.sec);
+    });
+    if (gia) {
       aggiornamentiLog.push([adesso, 'era gia\' presente nel file condiviso']);
       saltati++;
       return;
     }
-    esistenti[chiave] = true;
+    esistenti.push({ data: data, sec: secDec, email: io });
 
     var d = lDurata_(secDec, secAtt);
 
@@ -576,6 +655,8 @@ function sincronizzaVoliCondivisi() {
     setCol_(out, h, 'Pilota', mioNome);
     setCol_(out, h, 'ICAO decollo', dep);
     setCol_(out, h, 'ICAO atterraggio', arr);
+    // Orari in UTC, gli stessi del logbook: il foglio "Voli" condiviso usa la
+    // medesima convenzione, quindi non c'e' nulla da convertire.
     setCol_(out, h, 'Ora decollo', oraDec);
     setCol_(out, h, 'Ora atterraggio', lFormattaOra_(secAtt));
     setCol_(out, h, 'Durata (hh:mm)', d.hhmm);
@@ -705,12 +786,12 @@ function importaDaFileCondiviso() {
   var marcheCondivise = Object.keys(velivoli).filter(function (k) { return velivoli[k].condiviso; })[0];
   if (!marcheCondivise) { lAvvisa_('Nel foglio "Velivoli" non c\'e\' nessun mezzo marcato come condiviso.'); return; }
 
-  // Voli gia' presenti nel logbook: chiave data|ora decollo.
-  var presenti = {};
+  // Voli gia' presenti nel logbook: elenco, non chiave esatta, perche' il
+  // confronto passa da lStessoVolo_ (data + decollo entro la tolleranza).
+  var presenti = [];
   if (log.getLastRow() > 1) {
     log.getRange(2, 1, log.getLastRow() - 1, HEADER_LOG.length).getValues().forEach(function (r) {
-      var sec = lParseOra_(r[LC.DEC - 1]);
-      presenti[lParseData_(r[LC.DATA - 1]) + '|' + (sec === null ? '' : lFormattaOra_(sec))] = true;
+      presenti.push({ data: lParseData_(r[LC.DATA - 1]), sec: lParseOra_(r[LC.DEC - 1]) });
     });
   }
 
@@ -722,9 +803,8 @@ function importaDaFileCondiviso() {
     var secDec = lParseOra_(r[h.map['Ora decollo']]);
     var secAtt = lParseOra_(r[h.map['Ora atterraggio']]);
     if (!data || secDec === null || secAtt === null) return;
-    var chiave = data + '|' + lFormattaOra_(secDec);
-    if (presenti[chiave]) return;
-    presenti[chiave] = true;
+    if (presenti.some(function (x) { return lStessoVolo_(data, secDec, x.data, x.sec); })) return;
+    presenti.push({ data: data, sec: secDec });
 
     var d = lDurata_(secDec, secAtt);
     var riga = new Array(HEADER_LOG.length).fill('');

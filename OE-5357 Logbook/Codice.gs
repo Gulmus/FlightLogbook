@@ -25,15 +25,32 @@
  *   - Tocco su un giorno del calendario: se e' oggi o nel futuro si prenota,
  *     se e' nel passato ed e' libero si registra direttamente un volo gia'
  *     effettuato (Tipo RETROATTIVA, stato CONCLUSA in un colpo solo).
+ *
+ * ORARI
+ *   Le ore di decollo e atterraggio del foglio "Voli" sono in UTC (ora zulu),
+ *   come nella traccia IGC e nel fonogramma ATC. E' una convenzione condivisa
+ *   con il logbook personale, non una conversione: nessuna funzione tocca gli
+ *   orari inseriti. Il modulo mostra accanto l'ora locale corrispondente solo
+ *   come aiuto alla lettura. CONFIG.TZ serve a sapere che giorno e' oggi, non a
+ *   spostare le ore.
  ******************************************************************************/
 
 /* ============================ CONFIGURAZIONE ============================== */
 
 var CONFIG = {
   NOME_BENE: 'DG300',                   // compare nel titolo e nelle email
-  TZ: 'Europe/Rome',                    // fuso usato per "oggi"
+  TZ: 'Europe/Rome',                    // fuso usato per sapere che giorno e' "oggi"
+  /**
+   * true = le ore di decollo e atterraggio si inseriscono e si leggono in UTC,
+   * come nel logbook personale, nella traccia IGC e nel fonogramma ATC.
+   * Non e' una conversione: nessuna funzione modifica l'orario scritto. La
+   * bandiera serve alle etichette dell'app, alle note sulle celle e alle email.
+   * Mettendola a false l'app torna a parlare di ora locale, ma il foglio "Voli"
+   * resterebbe pieno di orari UTC: cambiarla non converte lo storico.
+   */
+  ORARI_UTC: true,
   MAX_GIORNI_FUTURO: 400,               // quanto in avanti si puo' prenotare
-  GIORNI_STORICO_VISIBILI: 360,          // giorni passati mostrati in app
+  GIORNI_STORICO_VISIBILI: 60,          // giorni passati mostrati in app
   PREAVVISO_MINIMO_GIORNI: 0,           // 0 = si puo' prenotare anche per oggi
   MAX_PRENOTAZIONI_FUTURE: 0,           // limite per socio; 0 = nessun limite
   NOTIFICA_EMAIL: true,                 // email agli altri soci a ogni modifica
@@ -51,7 +68,7 @@ var CONFIG = {
    * Esempio valido (repository GitHub pubblico):
    *   'https://raw.githubusercontent.com/utente/repo/main/icona.png'
    */
-  ICONA_URL: 'https://raw.githubusercontent.com/Gulmus/FlightLogbook/main/88_512.png'
+  ICONA_URL: ''
 };
 
 /**
@@ -182,10 +199,22 @@ function inizializzaFogli() {
   vo.getRange(2, 8, righeVoli, 3).setNumberFormat('@');  // Ore e durata hh:mm
   vo.getRange(2, 11, righeVoli, 1).setNumberFormat('0'); // Durata minuti
 
+  // Nota sulle due intestazioni degli orari: chi apre il foglio deve sapere in
+  // che fuso sono i numeri che legge, senza dover cercare la documentazione.
+  var notaOre = CONFIG.ORARI_UTC
+    ? 'Orario in UTC (ora zulu), come nella traccia IGC e nel fonogramma ATC.\n' +
+      'Non in ora locale: d\'estate due ore in meno, d\'inverno una.'
+    : 'Orario in ora locale (' + CONFIG.TZ + ').';
+  vo.getRange(1, 8).setNote(notaOre);   // Ora decollo
+  vo.getRange(1, 9).setNote(notaOre);   // Ora atterraggio
+
   SpreadsheetApp.getUi().alert(
     'Fogli pronti.\n\n' +
     '1) Compila "Utenti" con i comproprietari.\n' +
     '2) Verifica l\'elenco in "Aeroporti".\n' +
+    (CONFIG.ORARI_UTC
+      ? '   Ricorda: in "Voli" gli orari di decollo e atterraggio sono in UTC.\n'
+      : '') +
     '3) Inserisci le assegnazioni annuali in "Prenotazioni" con Tipo = ASSEGNAZIONE.\n' +
     '4) Distribuisci la web app (vedi istruzioni).');
 }
@@ -242,6 +271,8 @@ function itDate_(isoStr) {
 /**
  * Converte 'HH:MM' in minuti dalla mezzanotte.
  * Accetta anche 'H:M' e 'HH.MM'. Restituisce null se non valido.
+ * L'orario viene preso per quello che e': se CONFIG.ORARI_UTC e' true quei
+ * minuti sono minuti UTC, e nessuno li sposta.
  */
 function parseOra_(v) {
   if (v === null || v === undefined) return null;
@@ -258,6 +289,9 @@ function parseOra_(v) {
 
 /** minuti -> 'HH:MM' */
 function formattaOra_(min) { return pad2_(Math.floor(min / 60)) + ':' + pad2_(min % 60); }
+
+/** ' UTC' da attaccare a un orario nei messaggi e nelle email, o '' se no. */
+function utc_suffisso_() { return CONFIG.ORARI_UTC ? ' UTC' : ''; }
 
 /* ========================= UTENTI E AUTENTICAZIONE ======================== */
 
@@ -466,6 +500,10 @@ function statoCompleto_(utente) {
       preavviso: CONFIG.PREAVVISO_MINIMO_GIORNI,
       icaoDefault: CONFIG.ICAO_DEFAULT,
       icaoLibero: CONFIG.CONSENTI_ICAO_LIBERO,
+      // Etichette degli orari nei moduli del rendiconto e fuso su cui l'app
+      // calcola l'ora locale mostrata come promemoria.
+      orariUtc: CONFIG.ORARI_UTC,
+      fusoLocale: CONFIG.TZ,
       oggi: oggi,
       anno: anno
     },
@@ -646,6 +684,9 @@ function sovrascriviGiorno(auth, payload) {
  * payload = { id, icaoDecollo, icaoAtterraggio, oraDecollo:'HH:MM', oraAtterraggio:'HH:MM' }
  * Compilabile in qualunque momento del giorno stesso del volo o nei giorni
  * successivi; mai per una data futura.
+ * Gli orari arrivano dall'app gia' in UTC (vedi CONFIG.ORARI_UTC) e vengono
+ * scritti nel foglio cosi' come sono: la durata e' una semplice differenza,
+ * quindi non c'e' nessun fuso di mezzo.
  */
 function salvaVolo(auth, payload) {
   var utente = risolviUtente_(auth);
@@ -700,6 +741,7 @@ function salvaVolo(auth, payload) {
  *
  * payload = { data, email (pilota, default: chi opera), note,
  *             icaoDecollo, icaoAtterraggio, oraDecollo:'HH:MM', oraAtterraggio:'HH:MM' }
+ * Come nel rendiconto normale, gli orari sono in UTC e non vengono convertiti.
  */
 function registraVoloPassato(auth, payload) {
   var utente = risolviUtente_(auth);
@@ -811,7 +853,7 @@ function notificaVolo_(autore, p, dep, arr, oraDec, oraAtt, durata) {
       '[' + CONFIG.NOME_BENE + '] Volo del ' + itDate_(p.data) + ' — ' + durata,
       'Pilota: ' + (p.nome || p.email) + '\n' +
       'Tratta: ' + dep + ' → ' + arr + '\n' +
-      'Decollo: ' + oraDec + '   Atterraggio: ' + oraAtt + '\n' +
+      'Decollo: ' + oraDec + utc_suffisso_() + '   Atterraggio: ' + oraAtt + utc_suffisso_() + '\n' +
       'Durata: ' + durata + ' (hh:mm)\n' +
       (urlApp_() ? '\nRegistro: ' + urlApp_() + '\n' : ''));
   } catch (err) {
@@ -841,7 +883,8 @@ function promemoriaRendiconti() {
       MailApp.sendEmail(u.email,
         '[' + CONFIG.NOME_BENE + '] Registra il volo del ' + itDate_(p.data),
         'Ciao ' + u.nome + ',\n\nrisulta prenotato il ' + itDate_(p.data) +
-        ' senza rendiconto.\nInserisci decollo, atterraggio e orari qui:\n' + urlApp_() +
+        ' senza rendiconto.\nInserisci decollo, atterraggio e orari' +
+        (CONFIG.ORARI_UTC ? ' (in UTC)' : '') + ' qui:\n' + urlApp_() +
         '\n\n(Se non hai volato, rimuovi la prenotazione dal calendario.)\n');
     } catch (err) {
       console.warn(err.message);

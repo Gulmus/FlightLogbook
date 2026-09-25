@@ -169,14 +169,20 @@
 
     <div class="due">
       <div>
-        <label for="dec">Ora decollo</label>
+        <label for="dec">Ora decollo <span id="etDec">UTC</span></label>
         <input type="time" id="dec">
       </div>
       <div>
-        <label for="att">Ora atterraggio</label>
+        <label for="att">Ora atterraggio <span id="etAtt">UTC</span></label>
         <input type="time" id="att">
       </div>
     </div>
+
+    <!-- Promemoria: gli stessi orari letti in ora locale, calcolati sulla data
+         del volo (così l'ora legale è gestita da sola). Il pulsante serve a chi
+         si accorge di aver digitato l'ora locale: converte i due campi in UTC. -->
+    <div class="nota" id="oreLocali"></div>
+    <button type="button" id="convertiLocali" class="link nascosto">Ho scritto l’ora locale: converti in UTC</button>
 
     <div class="durata" id="durata">Durata: —</div>
 
@@ -416,6 +422,7 @@ async function wgScegli(id){
     var note = document.getElementById('note');
     if(!note.value.trim()) note.value = p.note || '';
     aggiornaDurata();
+    aggiornaOreLocali();   // gli orari WeGlide sono già UTC: qui si mostra solo il locale
     wgAggiornaBudget(p.budget, false);
 
     WG_ID = String(p.weglideId);
@@ -439,6 +446,79 @@ async function wgScegli(id){
 function wgScollega(){
   WG_ID = '';
   document.getElementById('wgBanner').classList.add('nascosto');
+}
+
+/* ====================================================================
+   ORARI IN UTC
+   Nel foglio e in questo modulo gli orari sono UTC, come nella traccia
+   IGC e nel fonogramma ATC: è una convenzione, niente viene convertito
+   al salvataggio. Qui sotto si calcola solo l'ora locale corrispondente
+   da mostrare come promemoria, e la conversione inversa per chi si
+   accorge di aver digitato l'ora locale.
+
+   La conversione si fa sulla DATA DEL VOLO, non su oggi: così il fuso
+   estivo o invernale lo decide il browser senza tabelle da mantenere.
+   ==================================================================== */
+function due(n){ return ('0'+n).slice(-2); }
+
+/** 'HH:MM' -> minuti dalla mezzanotte, oppure null. */
+function minutiDa(hhmmTxt){
+  var p = String(hhmmTxt||'').split(':');
+  if(p.length<2) return null;
+  var h = +p[0], m = +p[1];
+  return (isNaN(h)||isNaN(m)) ? null : h*60+m;
+}
+
+/** Data del modulo come [anno, mese, giorno], o null se non c'è. */
+function partiData(){
+  var p = String(document.getElementById('data').value||'').split('-');
+  return p.length===3 ? [+p[0], +p[1], +p[2]] : null;
+}
+
+/** 'HH:MM' UTC -> 'HH:MM' locale, sulla data del volo. */
+function utcInLocale(hhmmTxt){
+  var d = partiData(), m = minutiDa(hhmmTxt);
+  if(!d || m===null) return '';
+  var t = new Date(Date.UTC(d[0], d[1]-1, d[2], Math.floor(m/60), m%60));
+  return due(t.getHours())+':'+due(t.getMinutes());
+}
+
+/** 'HH:MM' locale -> 'HH:MM' UTC, sulla data del volo. */
+function localeInUtc(hhmmTxt){
+  var d = partiData(), m = minutiDa(hhmmTxt);
+  if(!d || m===null) return '';
+  var t = new Date(d[0], d[1]-1, d[2], Math.floor(m/60), m%60);
+  return due(t.getUTCHours())+':'+due(t.getUTCMinutes());
+}
+
+/** Riga di promemoria sotto i campi orario. */
+function aggiornaOreLocali(){
+  var box = document.getElementById('oreLocali');
+  var bottone = document.getElementById('convertiLocali');
+  if(STATO && STATO.orariUtc === false){ box.textContent=''; bottone.classList.add('nascosto'); return; }
+
+  var dec = utcInLocale(document.getElementById('dec').value);
+  var att = utcInLocale(document.getElementById('att').value);
+  if(!dec && !att){
+    box.textContent = 'Gli orari si scrivono in UTC (ora zulu), come nella traccia IGC e nel fonogramma ATC.';
+    bottone.classList.add('nascosto');
+    return;
+  }
+  box.textContent = 'In ora locale' + (STATO && STATO.fusoLocale ? ' ('+STATO.fusoLocale+')' : '') +
+    ' sarebbe ' + (dec||'—') + '–' + (att||'—') + '. Nel foglio va l’UTC.';
+  bottone.classList.remove('nascosto');
+}
+
+/** I due campi vengono riletti come ora locale e riscritti in UTC. */
+function convertiDaLocale(){
+  ['dec','att'].forEach(function(id){
+    var el = document.getElementById(id);
+    var v = localeInUtc(el.value);
+    if(v) el.value = v;
+  });
+  aggiornaDurata();
+  aggiornaOreLocali();
+  avvisa('Orari convertiti da ora locale a UTC. Ricontrollali prima di salvare.','att');
 }
 
 /* ====================================================================
@@ -480,7 +560,8 @@ function disegnaUltimi(voli){
                (v.quota!==''&&v.quota!==null?' · sgancio '+v.quota+' m':'')+'</div>'+
              '</div>'+
              '<div class="dx"><div class="ore">'+hhmm(v.minuti)+'</div>'+
-               '<div style="font-size:12px;color:#6b7280">'+v.oraDec+'–'+v.oraAtt+'</div>'+
+               '<div style="font-size:12px;color:#6b7280">'+v.oraDec+'–'+v.oraAtt+
+                 (STATO && STATO.orariUtc===false ? '' : ' UTC')+'</div>'+
              '</div>'+
            '</div>';
   }).join('');
@@ -513,6 +594,13 @@ function applica(stato, primaVolta){
 
     // Funzione a bordo preselezionata (LOG_CONFIG.FUNZIONE_DEFAULT).
     impostaFunzione(stato.funzioneDefault);
+
+    // Etichette degli orari: la convenzione arriva dal server (LOG_CONFIG.ORARI_UTC),
+    // così basta cambiarla in un punto per vederla riflessa anche qui.
+    var et = stato.orariUtc === false ? '(locale)' : 'UTC';
+    document.getElementById('etDec').textContent = et;
+    document.getElementById('etAtt').textContent = et;
+    aggiornaOreLocali();
 
     // Riquadro WeGlide: c'è solo se il terzo file di script è installato.
     var w = stato.weglide || {};
@@ -569,6 +657,7 @@ async function salva(){
     // Si svuota solo ciò che cambia da volo a volo: data e velivolo restano.
     ['dec','att','quota','note'].forEach(function(id){ document.getElementById(id).value=''; });
     aggiornaDurata();
+    aggiornaOreLocali();
     wgScollega();
     // L'elenco WeGlide già a schermo marca subito il volo come importato, senza
     // spendere un'altra richiesta.
@@ -597,6 +686,13 @@ async function salva(){
     document.getElementById('dec').addEventListener('input', aggiornaDurata);
     document.getElementById('att').addEventListener('input', aggiornaDurata);
     document.getElementById('salva').addEventListener('click', salva);
+
+    // Promemoria dell'ora locale: si aggiorna anche cambiando la data, perché è
+    // la data del volo a dire se vale l'ora legale o quella solare.
+    ['dec','att','data'].forEach(function(id){
+      document.getElementById(id).addEventListener('input', aggiornaOreLocali);
+    });
+    document.getElementById('convertiLocali').addEventListener('click', convertiDaLocale);
 
     // WeGlide: ricerca dei voli, aggiornamento forzato, annullo precompilazione.
     document.getElementById('wgCerca').addEventListener('click', function(){ wgCercaVoli(false); });

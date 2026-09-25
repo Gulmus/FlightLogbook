@@ -43,7 +43,7 @@ var WG_CONFIG = {
    * Pilot ID. Normalmente si imposta da menu (finisce nelle proprieta' dello
    * script); se preferisci tenerlo nel codice scrivilo qui e il menu non serve.
    */
-  PILOT_ID: 31818,
+  PILOT_ID: 0,
 
   VOLI_DA_LEGGERE: 25,        // quanti voli chiedere nell'elenco (1 richiesta)
   GIORNI_INDIETRO: 180,       // voli piu' vecchi di cosi' non vengono proposti
@@ -385,7 +385,10 @@ function wgCondensa_(f) {
   var ae = f[WG_F.AEREO] || {};
   return {
     id: f[WG_F.ID],
-    data: lParseData_(f[WG_F.DATA]) || wgGiorno_(f[WG_F.DECOLLO]),
+    // Prima il giorno del decollo (UTC), poi scoring_date come ripiego: la data
+    // di punteggio puo' riferirsi a un altro giorno, quella del decollo e' la
+    // stessa che finisce nel logbook accanto agli orari UTC.
+    data: wgGiorno_(f[WG_F.DECOLLO]) || lParseData_(f[WG_F.DATA]),
     oraDec: wgOra_(f[WG_F.DECOLLO]),
     oraAtt: wgOra_(f[WG_F.ATTERRAGGIO]),
     minuti: wgMinuti_(f[WG_F.DECOLLO], f[WG_F.ATTERRAGGIO]),
@@ -440,22 +443,28 @@ function wgStatoPerApp_() {
  * Elenco dei voli WeGlide da scegliere. Segna quelli gia' presenti nel logbook
  * (per ID WeGlide oppure, per i voli inseriti a mano prima di questa funzione,
  * per data + ora di decollo) cosi' non si importa due volte lo stesso volo.
+ * Il confronto sull'orario e' tollerante (lStessoVolo_): entrambi gli orari sono
+ * in UTC, ma quello scritto a mano viene dall'ATC e quello WeGlide dall'IGC,
+ * quindi ballano quasi sempre di qualche minuto.
  */
 function wgVoliDaScegliere(forza) {
   var e = wgElenco_(!!forza);
   var limite = logAddGiorni_(lOggi_(), -WG_CONFIG.GIORNI_INDIETRO);
 
-  var giaPresenti = {}, perOrario = {};
+  var giaPresenti = {}, inLogbook = [];
   logLeggiVoli_().forEach(function (v) {
     if (v.weglideId) giaPresenti[String(v.weglideId)] = true;
-    perOrario[v.data + '|' + String(v.oraDec).substring(0, 5)] = true;
+    inLogbook.push({ data: v.data, sec: lParseOra_(v.oraDec) });
   });
 
   var voli = e.voli.filter(function (v) { return v.data >= limite; }).map(function (v) {
     var copia = {};
     Object.keys(v).forEach(function (k) { copia[k] = v[k]; });
     copia.durata = logHhmm_(v.minuti);
-    copia.giaImportato = !!giaPresenti[String(v.id)] || !!perOrario[v.data + '|' + v.oraDec];
+    var secDec = lParseOra_(v.oraDec);
+    copia.giaImportato = !!giaPresenti[String(v.id)] || inLogbook.some(function (x) {
+      return lStessoVolo_(v.data, secDec, x.data, x.sec);
+    });
     return copia;
   });
 
@@ -513,7 +522,8 @@ function wgPreparaVolo(idVolo) {
     }
   });
 
-  var data = lParseData_(d[WG_F.DATA]) || wgGiorno_(d[WG_F.DECOLLO]);
+  // Come in wgCondensa_: il giorno del decollo (UTC) viene prima di scoring_date.
+  var data = wgGiorno_(d[WG_F.DECOLLO]) || lParseData_(d[WG_F.DATA]);
   var oraDec = wgOra_(d[WG_F.DECOLLO]);
   var oraAtt = wgOra_(d[WG_F.ATTERRAGGIO]);
   var minuti = wgMinuti_(d[WG_F.DECOLLO], d[WG_F.ATTERRAGGIO]);
@@ -565,16 +575,18 @@ function wgImportaVoli() {
   if (nuovi.length > WG_CONFIG.MAX_IMPORT_PER_VOLTA) nuovi = nuovi.slice(0, WG_CONFIG.MAX_IMPORT_PER_VOLTA);
 
   var elenco = nuovi.map(function (v) {
-    return '  ' + lItDate_(v.data) + '  ' + v.oraDec + '–' + v.oraAtt + '  ' +
+    return '  ' + lItDate_(v.data) + '  ' + v.oraDec + '–' + v.oraAtt + ' UTC  ' +
            v.durata + '  ' + (v.modello || '?') + '  ' + (v.aeroporto || '');
   }).join('\n');
 
   var risposta = ui.alert('Importare ' + nuovi.length + ' voli da WeGlide?',
     elenco + '\n\nOgni volo costa una richiesta di dettaglio (ne restano ' +
     dati.budget.restanti + ' oggi).\n\n' +
-    'Gli orari arrivano dalla traccia IGC e sono in UTC: controllali nel foglio ' +
-    'prima di sincronizzare con il file condiviso. La quota di sgancio resta da ' +
-    'completare a mano.',
+    'Gli orari arrivano dalla traccia IGC. Sono in UTC, cioe\' nello stesso fuso ' +
+    'del logbook, quindi non c\'e\' nessuna conversione da fare: vanno solo ' +
+    'confrontati con quelli che l\'ATC ti ha comunicato all\'atterraggio, prima di ' +
+    'sincronizzare con il file condiviso. La quota di sgancio resta da completare ' +
+    'a mano.',
     ui.ButtonSet.YES_NO);
   if (risposta !== ui.Button.YES) return;
 
@@ -606,7 +618,9 @@ function wgImportaVoli() {
     riga[LC.DUR - 1] = dur.hhmm;
     riga[LC.MIN - 1] = dur.minuti;
     riga[LC.NOTE - 1] = p.note;
-    riga[LC.ESITO - 1] = 'da WeGlide: controlla orari (UTC) e funzione';
+    // Gli orari sono gia' nel fuso giusto (UTC, come tutto il logbook): il
+    // promemoria serve solo a confrontarli con quelli dell'ATC.
+    riga[LC.ESITO - 1] = 'da WeGlide: orari UTC dalla traccia IGC, confrontali con l\'ATC; controlla la funzione';
     riga[LC.FUNZ - 1] = lFunzione_('');     // PIC per default, da correggere se DUAL
     riga[LC.WG - 1] = p.weglideId;
     righe.push(riga);
@@ -635,7 +649,7 @@ function wgProvaCollegamento() {
       'Pilot ID: ' + wgPilotId_() + '\n' +
       'API key: ' + (wgChiave_() ? 'presente' : 'assente (i voli pubblici si leggono comunque)') + '\n' +
       'Voli ricevuti: ' + e.voli.length + '\n' +
-      (ultimo ? 'Ultimo volo: ' + lItDate_(ultimo.data) + ' ' + ultimo.oraDec + '–' + ultimo.oraAtt +
+      (ultimo ? 'Ultimo volo: ' + lItDate_(ultimo.data) + ' ' + ultimo.oraDec + '–' + ultimo.oraAtt + ' UTC' +
                 ' (' + ultimo.durata + ') ' + (ultimo.modello || '') + ' da ' + (ultimo.aeroporto || '?') + '\n' : '') +
       '\nRichieste usate oggi: ' + b.usate + ' di ' + b.massimo + ' (limite WeGlide: 60).');
   } catch (err) {

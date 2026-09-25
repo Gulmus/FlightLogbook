@@ -9,6 +9,9 @@
   File HTML da creare nel progetto Apps Script con nome esatto "Index".
   Prenotazione a giorno singolo; ogni socio puo' rimuovere o sovrascrivere il
   giorno di un altro socio previa conferma; rendiconto volo a 4 campi.
+  Gli orari di decollo e atterraggio si inseriscono in UTC (ora zulu), come nel
+  fonogramma ATC e nella traccia IGC: sotto i campi compare l'ora locale
+  corrispondente, ma solo come promemoria, niente viene convertito.
 -->
 <style>
   :root{
@@ -179,8 +182,14 @@
         </div>
       </div>
       <div class="row">
-        <div><label>Ora decollo</label><input id="pDec" type="time" step="60"></div>
-        <div><label>Ora atterraggio</label><input id="pAtt" type="time" step="60"></div>
+        <div><label>Ora decollo <span id="pEtDec">UTC</span></label><input id="pDec" type="time" step="60"></div>
+        <div><label>Ora atterraggio <span id="pEtAtt">UTC</span></label><input id="pAtt" type="time" step="60"></div>
+      </div>
+      <!-- Gli stessi orari letti in ora locale, calcolati sulla data del volo:
+           serve solo a rileggere, nel foglio va l'UTC. -->
+      <div class="hint" id="pOreLocali"></div>
+      <div class="actions" style="margin-top:6px">
+        <button class="btn alt hide" id="pConverti">Ho scritto l'ora locale: converti in UTC</button>
       </div>
       <div class="durata">Durata volo: <b id="pDurataTxt">—</b></div>
       <label>Note (opzionale)</label>
@@ -231,7 +240,8 @@
     <div class="card">
       <h2>Voli da registrare</h2>
       <div id="rendList"></div>
-      <div class="hint">Il rendiconto si puo' compilare in qualsiasi momento a partire dal giorno del volo.</div>
+      <div class="hint">Il rendiconto si puo' compilare in qualsiasi momento a partire dal giorno del volo.
+        Gli orari vanno in UTC, come nel fonogramma ATC.</div>
     </div>
 
     <!-- Modulo rendiconto: 4 dati + durata calcolata -->
@@ -250,8 +260,12 @@
         </div>
       </div>
       <div class="row">
-        <div><label>Ora decollo</label><input id="vDec" type="time" step="60"></div>
-        <div><label>Ora atterraggio</label><input id="vAtt" type="time" step="60"></div>
+        <div><label>Ora decollo <span id="vEtDec">UTC</span></label><input id="vDec" type="time" step="60"></div>
+        <div><label>Ora atterraggio <span id="vEtAtt">UTC</span></label><input id="vAtt" type="time" step="60"></div>
+      </div>
+      <div class="hint" id="vOreLocali"></div>
+      <div class="actions" style="margin-top:6px">
+        <button class="btn alt hide" id="vConverti">Ho scritto l'ora locale: converti in UTC</button>
       </div>
       <div class="durata" id="durataBox">Durata volo: <b id="durataTxt">—</b></div>
       <div class="actions">
@@ -276,6 +290,7 @@ var D = null;              // fotografia dei dati ricevuta dal server
 var meseCorrente = null;   // {a: anno, m: mese 0-11} mostrato nel calendario
 var giornoSel = null;      // giorno su cui si sta operando ('yyyy-mm-dd')
 var voloId = null;         // prenotazione in fase di rendiconto
+var voloData = null;       // data del volo in rendiconto: serve a convertire UTC <-> locale
 
 var MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio',
             'agosto','settembre','ottobre','novembre','dicembre'];
@@ -358,6 +373,11 @@ function applica(){
     var p = D.config.oggi.split('-');
     meseCorrente = { a:+p[0], m:+p[1]-1 };
   }
+  // Etichette degli orari: la convenzione arriva dal server (CONFIG.ORARI_UTC),
+  // cosi' si cambia in un punto solo.
+  var et = D.config.orariUtc === false ? '(locale)' : 'UTC';
+  ['vEtDec','vEtAtt','pEtDec','pEtAtt'].forEach(function(id){ $(id).textContent = et; });
+
   riempiSelectPiloti();
   riempiSelectAeroporti();
   disegnaCalendario();
@@ -742,6 +762,7 @@ function disegnaRendiconti(){
 function apriVolo(id){
   voloId = id;
   var p = D.daRendicontare.filter(function(x){ return x.id === id; })[0];
+  voloData = p.data;   // la conversione UTC/locale si fa sulla data del volo
   $('voloTitolo').textContent = 'Volo del ' + itDate(p.data) + ' — ' + (p.nome || p.email);
   // Reset del modulo con i valori di default.
   $('vDep').value = D.config.icaoDefault;
@@ -780,9 +801,87 @@ function aggiornaDurataGen(idDec, idAtt, idTxt){
 
 function aggiornaDurata(){        // modulo rendiconto
   aggiornaDurataGen('vDec','vAtt','durataTxt');
+  aggiornaOreLocali();
 }
 function aggiornaDurataPassato(){ // modulo volo a posteriori
   aggiornaDurataGen('pDec','pAtt','pDurataTxt');
+  aggiornaOreLocaliPassato();
+}
+
+/* ============================= ORARI IN UTC ==============================
+   Nel foglio "Voli" gli orari di decollo e atterraggio sono in UTC (ora
+   zulu), come nel logbook personale, nella traccia IGC e nel fonogramma
+   ATC. E' una convenzione: niente viene convertito al salvataggio.
+   Qui si calcola soltanto l'ora locale corrispondente, da mostrare come
+   promemoria, e la conversione inversa per chi si accorge di aver
+   digitato l'ora locale.
+
+   La conversione si fa sulla DATA DEL VOLO, non su oggi: cosi' l'ora
+   legale o solare la decide il browser, senza tabelle da mantenere.
+   ======================================================================= */
+
+/** 'HH:MM' -> minuti dalla mezzanotte, oppure null. */
+function minutiDaOra(txt){
+  var p = String(txt || '').split(':');
+  if (p.length < 2) return null;
+  var h = +p[0], mi = +p[1];
+  return (isNaN(h) || isNaN(mi)) ? null : h*60 + mi;
+}
+
+/** 'yyyy-mm-dd' -> [anno, mese, giorno], oppure null. */
+function partiIso(iso){
+  var p = String(iso || '').split('-');
+  return p.length === 3 ? [+p[0], +p[1], +p[2]] : null;
+}
+
+/** 'HH:MM' UTC -> 'HH:MM' locale, sulla data indicata. */
+function utcInLocaleGen(iso, txt){
+  var d = partiIso(iso), m = minutiDaOra(txt);
+  if (!d || m === null) return '';
+  var t = new Date(Date.UTC(d[0], d[1]-1, d[2], Math.floor(m/60), m % 60));
+  return pad(t.getHours()) + ':' + pad(t.getMinutes());
+}
+
+/** 'HH:MM' locale -> 'HH:MM' UTC, sulla data indicata. */
+function localeInUtcGen(iso, txt){
+  var d = partiIso(iso), m = minutiDaOra(txt);
+  if (!d || m === null) return '';
+  var t = new Date(d[0], d[1]-1, d[2], Math.floor(m/60), m % 60);
+  return pad(t.getUTCHours()) + ':' + pad(t.getUTCMinutes());
+}
+
+/** Riga di promemoria e pulsante di conversione di uno dei due moduli. */
+function aggiornaOreLocaliGen(iso, idDec, idAtt, idNota, idBtn){
+  var nota = $(idNota), btn = $(idBtn);
+  if (!D || D.config.orariUtc === false){ nota.textContent = ''; btn.classList.add('hide'); return; }
+
+  var dec = utcInLocaleGen(iso, $(idDec).value);
+  var att = utcInLocaleGen(iso, $(idAtt).value);
+  if (!dec && !att){
+    nota.textContent = 'Gli orari si scrivono in UTC (ora zulu), come nel fonogramma ATC e nella traccia IGC.';
+    btn.classList.add('hide');
+    return;
+  }
+  nota.textContent = 'In ora locale' + (D.config.fusoLocale ? ' (' + D.config.fusoLocale + ')' : '') +
+    ' sarebbe ' + (dec || '—') + '–' + (att || '—') + '. Nel foglio va l\'UTC.';
+  btn.classList.remove('hide');
+}
+
+/** Rilegge i due campi come ora locale e li riscrive in UTC. */
+function convertiDaLocaleGen(iso, idDec, idAtt, dopo){
+  [idDec, idAtt].forEach(function(id){
+    var v = localeInUtcGen(iso, $(id).value);
+    if (v) $(id).value = v;
+  });
+  if (dopo) dopo();
+  info('Orari convertiti da ora locale a UTC: ricontrollali prima di salvare.');
+}
+
+function aggiornaOreLocali(){          // modulo rendiconto
+  aggiornaOreLocaliGen(voloData, 'vDec', 'vAtt', 'vOreLocali', 'vConverti');
+}
+function aggiornaOreLocaliPassato(){   // modulo volo a posteriori
+  aggiornaOreLocaliGen(giornoSel, 'pDec', 'pAtt', 'pOreLocali', 'pConverti');
 }
 
 function salvaVolo(){
@@ -843,6 +942,9 @@ $('pDec').addEventListener('change', aggiornaDurataPassato);
 $('pAtt').addEventListener('change', aggiornaDurataPassato);
 $('pDec').addEventListener('input', aggiornaDurataPassato);
 $('pAtt').addEventListener('input', aggiornaDurataPassato);
+$('pConverti').addEventListener('click', function(){
+  convertiDaLocaleGen(giornoSel, 'pDec', 'pAtt', aggiornaDurataPassato);
+});
 $('pDep').addEventListener('change', function(){
   $('pDepAltro').classList.toggle('hide', this.value !== '__ALTRO__');
 });
@@ -856,6 +958,9 @@ $('vDec').addEventListener('change', aggiornaDurata);
 $('vAtt').addEventListener('change', aggiornaDurata);
 $('vDec').addEventListener('input', aggiornaDurata);
 $('vAtt').addEventListener('input', aggiornaDurata);
+$('vConverti').addEventListener('click', function(){
+  convertiDaLocaleGen(voloData, 'vDec', 'vAtt', aggiornaDurata);
+});
 
 // Il valore "Altro…" mostra il campo per digitare un ICAO non in elenco.
 $('vDep').addEventListener('change', function(){
